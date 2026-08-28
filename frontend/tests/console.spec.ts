@@ -45,4 +45,27 @@ test("logs in and renders services and node metrics", async ({ page }) => {
   await page.getByRole("button", { name: "Events" }).click();
   await expect(page.getByText("Node online")).toBeVisible();
   await expect(page.getByText("node-1")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Admin settings" })).toHaveCount(0);
+});
+
+test("admin rotates a token without persisting it in the browser", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ongrok.locale", "en"));
+  await page.route("**/v1/auth/validate", async (route) => route.fulfill({ json: { kind: "admin" } }));
+  await page.route("**/v1/services", async (route) => route.fulfill({ json: [] }));
+  await page.route("**/v1/nodes", async (route) => route.fulfill({ json: [] }));
+  await page.route("**/v1/events", async (route) => route.fulfill({ json: [] }));
+  await page.route("**/v1/admin/tokens/rotate", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ kind: "User" });
+    await route.fulfill({ json: { kind: "user", token: "new-user-token" } });
+  });
+
+  await page.goto("/");
+  await page.getByLabel("API address").fill("http://127.0.0.1:8080");
+  await page.getByLabel("Token").fill("admin-token");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByRole("button", { name: "Admin settings" }).click();
+  await page.getByRole("button", { name: "Rotate token" }).click();
+  await expect(page.getByLabel("New token")).toHaveValue("new-user-token");
+  await expect(page.getByRole("status")).toContainText("Token rotated");
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("new-user-token");
 });

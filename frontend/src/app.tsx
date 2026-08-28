@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   LogOut,
   History,
+  KeyRound,
   Server,
   Moon,
   RefreshCw,
@@ -38,6 +39,7 @@ type Node = {
 };
 type Metric = MetricSample;
 type Auth = { kind: string };
+type TokenKind = "Admin" | "User";
 type ControlEvent = {
   event_id: string;
   occurred_at_unix_ms: number;
@@ -57,7 +59,7 @@ export function App() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [events, setEvents] = useState<ControlEvent[]>([]);
-  const [view, setView] = useState<"overview" | "nodes" | "events">("overview");
+  const [view, setView] = useState<"overview" | "nodes" | "events" | "admin">("overview");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState(t("waiting"));
   const [syncedAt, setSyncedAt] = useState("--:--");
@@ -166,6 +168,12 @@ export function App() {
             <History size={17} />
             {t("events")}
           </button>
+          {auth.kind.toLowerCase() === "admin" && (
+            <button className={`nav-item ${view === "admin" ? "active" : ""}`} onClick={() => setView("admin")}>
+              <KeyRound size={17} />
+              {t("adminSettings")}
+            </button>
+          )}
         </nav>
         <div className="sidebar-bottom">
           <label className="field">
@@ -281,12 +289,62 @@ export function App() {
           </>
           ) : view === "nodes" ? (
             <NodePanel nodes={nodes} metrics={metrics} syncStatus={syncStatus} />
-          ) : (
+          ) : view === "events" ? (
             <EventPanel events={events} />
+          ) : (
+            <AdminPanel request={request} />
           )}
         </div>
       </main>
     </div>
+  );
+}
+
+function AdminPanel({ request }: { request: <T>(path: string, init?: RequestInit) => Promise<T> }) {
+  const { t } = useTranslation();
+  const [kind, setKind] = useState<TokenKind>("User");
+  const [newToken, setNewToken] = useState("");
+  const [message, setMessage] = useState("");
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const mutate = async (action: "rotate" | "revoke") => {
+    setMessage("");
+    try {
+      const result = await request<{ token?: string; revoked?: boolean }>(`/v1/admin/tokens/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+      });
+      setNewToken(result.token ?? "");
+      setMessage(action === "rotate" ? t("tokenRotated") : t("tokenRevoked"));
+      setConfirmRevoke(false);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : t("requestFailed"));
+    }
+  };
+  return (
+    <section className="section admin-settings">
+      <div className="section-head"><h2>{t("tokenManagement")}</h2></div>
+      <label className="field admin-kind">
+        {t("tokenKind")}
+        <select className="select" value={kind} onChange={(event) => { setKind(event.target.value as TokenKind); setConfirmRevoke(false); setNewToken(""); }}>
+          <option value="User">{t("userToken")}</option>
+          <option value="Admin">{t("adminToken")}</option>
+        </select>
+      </label>
+      <div className="admin-actions">
+        <button className="button" onClick={() => void mutate("rotate")}><RefreshCw size={15} /> {t("rotateToken")}</button>
+        {!confirmRevoke ? (
+          <button className="button danger" onClick={() => setConfirmRevoke(true)}>{t("revokeToken")}</button>
+        ) : (
+          <>
+            <button className="button danger" onClick={() => void mutate("revoke")}>{t("confirmRevoke")}</button>
+            <button className="button secondary" onClick={() => setConfirmRevoke(false)}>{t("cancel")}</button>
+          </>
+        )}
+      </div>
+      {newToken && <label className="field token-result">{t("newToken")}<input readOnly value={newToken} /></label>}
+      <p className="muted" role="status">{message}</p>
+    </section>
   );
 }
 

@@ -156,6 +156,29 @@ button:not(:disabled) {
   color: var(--foreground);
   border-color: var(--border);
 }
+.button.danger {
+  background: transparent;
+  color: oklch(0.58 0.2 25);
+  border-color: oklch(0.58 0.2 25);
+}
+.admin-settings {
+  max-width: 680px;
+}
+.admin-kind,
+.token-result {
+  max-width: 520px;
+}
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 22px 0;
+}
+.admin-actions .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .error {
   color: oklch(0.65 0.2 25);
   font-size: 13px;
