@@ -1,7 +1,7 @@
 use crate::{
     api_models::{
-        AuthResponse, ErrorResponse, HealthResponse, ServiceCreateRequest, ServiceView,
-        TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
+        AuthResponse, ErrorResponse, HealthResponse, ServiceCreateRequest, ServicePatchRequest,
+        ServiceView, TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
     },
     config::{Cli, Command, RunOptions, TokenCommand, validate_run_options, validate_tls_material},
     ingress::{run_http_ingress, run_https_ingress},
@@ -1345,6 +1345,99 @@ async fn api_handler(
                         },
                     ),
                 });
+            }
+            (&Method::PATCH, _) => {
+                let bytes = match request.into_body().collect().await {
+                    Ok(body) => body.to_bytes(),
+                    Err(error) => {
+                        warn!(%error, service_id = %service_id.0, "failed to read service patch request");
+                        return Ok(json(
+                            StatusCode::BAD_REQUEST,
+                            &ErrorResponse {
+                                error: "invalid service patch request",
+                            },
+                        ));
+                    }
+                };
+                if bytes.len() > MAX_API_BODY_BYTES {
+                    return Ok(json(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        &ErrorResponse {
+                            error: "service patch request is too large",
+                        },
+                    ));
+                }
+                let patch: ServicePatchRequest = match serde_json::from_slice(&bytes) {
+                    Ok(patch) => patch,
+                    Err(error) => {
+                        warn!(%error, service_id = %service_id.0, "failed to decode service patch request");
+                        return Ok(json(
+                            StatusCode::BAD_REQUEST,
+                            &ErrorResponse {
+                                error: "invalid service patch request",
+                            },
+                        ));
+                    }
+                };
+                let Some(metadata) = patch.metadata else {
+                    return Ok(json(
+                        StatusCode::BAD_REQUEST,
+                        &ErrorResponse {
+                            error: "metadata is required",
+                        },
+                    ));
+                };
+                if let Err(error) = metadata.validate() {
+                    warn!(%error, service_id = %service_id.0, "service metadata patch rejected");
+                    return Ok(json(
+                        StatusCode::BAD_REQUEST,
+                        &ErrorResponse {
+                            error: "invalid service metadata",
+                        },
+                    ));
+                }
+                let updated = {
+                    let mut services = state.services.lock().await;
+                    let Some(service) = services.get_mut(&service_id) else {
+                        return Ok(json(
+                            StatusCode::NOT_FOUND,
+                            &ErrorResponse {
+                                error: "service not found",
+                            },
+                        ));
+                    };
+                    service.metadata = metadata;
+                    service.clone()
+                };
+                if let Err(error) = state.store.put(&updated) {
+                    error!(%error, service_id = %service_id.0, "failed to persist service metadata patch");
+                    return Ok(json(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &ErrorResponse {
+                            error: "failed to update service",
+                        },
+                    ));
+                }
+                let node = state.nodes.lock().await.get(&updated.node_id).cloned();
+                return Ok(json(
+                    StatusCode::OK,
+                    &ServiceView {
+                        status: if node
+                            .as_ref()
+                            .is_some_and(|n| n.status == NodeStatus::Online)
+                        {
+                            ServiceStatus::Online
+                        } else {
+                            ServiceStatus::Offline
+                        },
+                        transport: node.as_ref().map(|n| n.transport),
+                        last_heartbeat_at_unix_ms: node
+                            .as_ref()
+                            .and_then(|n| n.last_heartbeat_at_unix_ms),
+                        rtt_ms: node.as_ref().and_then(|n| n.rtt_ms),
+                        service: updated,
+                    },
+                ));
             }
             _ => {}
         }

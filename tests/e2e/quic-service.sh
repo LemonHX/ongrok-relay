@@ -165,6 +165,17 @@ curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/service
   | grep -q '"service_name":"demo"'
 curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/services \
   | grep -q '"public_host":"web.example.test"'
+service_id=$(curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/services | python3 -c '
+import json, sys
+services = json.load(sys.stdin)
+print(next(item["service_id"] for item in services if item["service_name"] == "demo"))
+')
+curl -fsS -X PATCH -H 'Authorization: Bearer user-test' -H 'Content-Type: application/json' \
+  --data '{"metadata":{"environment":"e2e","owner":"relay-test"}}' \
+  "http://127.0.0.1:18080/v1/services/$service_id" \
+  | grep -q '"environment":"e2e"'
+curl -fsS -H 'Authorization: Bearer user-test' "http://127.0.0.1:18080/v1/services/$service_id" \
+  | grep -q '"owner":"relay-test"'
 node_id=$(curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/nodes | python3 -c '
 import json, sys
 nodes = json.load(sys.stdin)

@@ -62,6 +62,12 @@ pub(crate) struct ServiceCreateRequest {
     pub(crate) metadata: Metadata,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ServicePatchRequest {
+    #[serde(default)]
+    pub(crate) metadata: Option<Metadata>,
+}
+
 impl ServiceCreateRequest {
     pub(crate) fn into_definition(self) -> ServiceDefinition {
         ServiceDefinition {
