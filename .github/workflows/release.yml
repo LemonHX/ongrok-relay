@@ -26,7 +26,7 @@ jobs:
       - name: Build release binaries
         run: cargo build --workspace --release --target x86_64-unknown-linux-musl
       - name: Build frontend
-        run: pnpm install --frozen-lockfile && pnpm run build
+        run: pnpm install --ignore-workspace --frozen-lockfile && pnpm run build
         working-directory: frontend
       - name: Assemble and checksum bundle
         shell: bash
