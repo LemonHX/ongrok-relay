@@ -43,6 +43,20 @@ wait_for_http_response() {
   return 1
 }
 
+wait_for_chunked_http_response() {
+  for _ in $(seq 1 50); do
+    response=$(printf 'chunk-one\nchunk-two\n' | curl --noproxy '*' --http1.1 -fsS \
+      -H 'Host: web.example.test' -H 'Transfer-Encoding: chunked' -H 'Expect:' \
+      --data-binary @- 'http://127.0.0.1:18081/upload?from=e2e' 2>/dev/null || true)
+    if test "$response" = 'method=POST path=/upload?from=e2e host=web.example.test body=chunk-one|chunk-two|'; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "chunked HTTP relay did not return the expected proxied response" >&2
+  return 1
+}
+
 wait_for_https_response() {
   for _ in $(seq 1 50); do
     response=$(curl --noproxy '*' -kfsS --resolve secure.example.test:18082:127.0.0.1 \
@@ -124,6 +138,19 @@ ECHO_PID=$!
 python3 -u -c '
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class Handler(BaseHTTPRequestHandler):
+    def read_body(self):
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            chunks = []
+            while True:
+                size = int(self.rfile.readline().strip(), 16)
+                if size == 0:
+                    self.rfile.readline()
+                    break
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()
+            return b"".join(chunks)
+        length = int(self.headers.get("Content-Length", "0"))
+        return self.rfile.read(length)
     def do_GET(self):
         body = "path={} host={}".format(self.path, self.headers.get("Host", "")).encode()
         self.send_response(200)
@@ -131,6 +158,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+    def do_POST(self):
+        body = self.read_body().decode()
+        response = "method=POST path={} host={} body={}".format(
+            self.path, self.headers.get("Host", ""), body.replace("\n", "|")
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
     def log_message(self, *args):
         pass
 ThreadingHTTPServer(("127.0.0.1", 18089), Handler).serve_forever()
@@ -163,6 +200,7 @@ HTTPS_CLIENT_PID=$!
 
 wait_for_tcp_echo
 wait_for_http_response
+wait_for_chunked_http_response
 wait_for_https_response
 "$ROOT/target/debug/ongrok-relay-client" services list \
   --server http://127.0.0.1:18080 --token user-test \
