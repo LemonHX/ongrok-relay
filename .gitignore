@@ -1,0 +1,21 @@
+.server-credentials.local.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+
+
+# Added by cargo
+
+/target
+
+/frontend/node_modules
+/frontend/dist
+
+# Local test/runtime state
+*.redb
+*.redb.lock
+.playwright/
+test-results/

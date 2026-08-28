@@ -1,0 +1,29 @@
+[package]
+name = "ongrok-relay-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+bytes = "1.12.1"
+clap = { version = "4.6.6", features = ["derive", "env"] }
+http-body-util = "0.1.5"
+hyper = { version = "1.11.0", features = ["full"] }
+hyper-util = { version = "0.1.20", features = ["full"] }
+libongrok = { version = "0.1.0", path = "../libongrok" }
+mimalloc = "0.1.52"
+postcard = { version = "1.1.3", features = ["alloc", "use-std"] }
+quinn = "0.11.11"
+redb = "4.2.0"
+rustls = { version = "0.23.43", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-pemfile = "2.2.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
+tokio-util = { version = "0.7.19", features = ["compat"] }
+tower-http = "0.7.0"
+tracing = { version = "0.1.44", features = ["attributes"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = "1.26.0"
+yamux = "0.14.0"
