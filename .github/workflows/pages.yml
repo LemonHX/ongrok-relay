@@ -39,11 +39,10 @@ jobs:
         if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         working-directory: frontend
       - name: Deploy frontend to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v3
         if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: ${{ env.CF_PAGES_PROJECT }}
-          directory: frontend/dist
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: frontend
+          command: pages deploy dist --project-name "$CF_PAGES_PROJECT"
