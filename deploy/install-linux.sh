@@ -21,6 +21,8 @@ install -m 0600 "$ONGROK_TLS_KEY" "$ETC_DIR/private.key"
 
 getent group ongrok >/dev/null || groupadd --system ongrok
 id ongrok >/dev/null 2>&1 || useradd --system --gid ongrok --home-dir "$STATE_DIR" --no-create-home ongrok
+chown root:ongrok "$ETC_DIR/private.key"
+chmod 0640 "$ETC_DIR/private.key"
 chown -R ongrok:ongrok "$STATE_DIR"
 
 umask 077
