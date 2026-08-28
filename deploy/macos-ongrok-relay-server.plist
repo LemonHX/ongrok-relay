@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>moe.lemonhx.ongrok-relay-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ongrok-relay-server</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ONGROK_TLS_CERT</key><string>/usr/local/etc/ongrok/fullchain.pem</string>
+    <key>ONGROK_TLS_KEY</key><string>/usr/local/etc/ongrok/privkey.pem</string>
+    <key>ONGROK_DB_PATH</key><string>/usr/local/var/ongrok/ongrok.redb</string>
+    <key>ONGROK_API_LISTEN</key><string>127.0.0.1:8080</string>
+    <key>ONGROK_QUIC_LISTEN</key><string>0.0.0.0:443</string>
+    <key>ONGROK_TCP_TLS_LISTEN</key><string>0.0.0.0:8443</string>
+    <key>ONGROK_PUBLIC_HOST</key><string>relay.example.com</string>
+    <key>ONGROK_ADMIN_TOKEN</key><string>replace-with-admin-token</string>
+    <key>ONGROK_USER_TOKEN</key><string>replace-with-user-token</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>

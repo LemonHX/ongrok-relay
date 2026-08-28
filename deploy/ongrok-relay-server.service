@@ -1,0 +1,23 @@
+[Unit]
+Description=ongrok relay server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ongrok
+Group=ongrok
+EnvironmentFile=/etc/ongrok/server.env
+ExecStart=/usr/local/bin/ongrok-relay-server run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ongrok
+LimitNOFILE=131072
+
+[Install]
+WantedBy=multi-user.target
