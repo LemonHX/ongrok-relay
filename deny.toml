@@ -1,7 +1,10 @@
 [advisories]
 version = 2
 db-path = "~/.cargo/advisory-db"
-ignore = []
+# No fixed upgrade exists for postcard's heapless/atomic-polyfill chain or
+# rustls-pemfile; cargo audit still reports these for dependency replacement.
+ignore = ["RUSTSEC-2023-0089", "RUSTSEC-2025-0134"]
+unmaintained = "transitive"
 
 [bans]
 multiple-versions = "warn"
@@ -12,7 +15,6 @@ highlight = "all"
 version = 2
 allow = [
   "Apache-2.0",
-  "BSD-2-Clause",
   "BSD-3-Clause",
   "CDLA-Permissive-2.0",
   "ISC",
