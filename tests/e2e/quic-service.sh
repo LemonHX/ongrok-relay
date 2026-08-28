@@ -209,6 +209,10 @@ wait_for_tcp_echo
 wait_for_http_response
 wait_for_chunked_http_response
 wait_for_https_response
+curl --noproxy '*' --http2 -kfsS --resolve api.example.test:18082:127.0.0.1 \
+  -H 'Authorization: Bearer user-test' \
+  -X POST https://api.example.test:18082/v1/auth/validate \
+  | grep -q '"kind":"user"'
 status=$(curl -sS -o /dev/null -w '%{http_code}' \
   -H 'Host: unknown.example.test' \
   http://127.0.0.1:18081/should-not-route)

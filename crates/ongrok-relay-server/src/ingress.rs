@@ -101,6 +101,13 @@ async fn http_ingress_handler(
     state: Arc<AppState>,
     protocol: Protocol,
 ) -> Result<Response<IngressBody>, Infallible> {
+    if is_api_host(&request, &state) {
+        let response = crate::server::api_handler(request, state).await?;
+        return Ok(response.map(|body| {
+            body.map_err(|never| -> ProxyError { match never {} })
+                .boxed()
+        }));
+    }
     let response = match forward_http_request(request, state, protocol).await {
         Ok(response) => response,
         Err(error) => {
@@ -109,6 +116,26 @@ async fn http_ingress_handler(
         }
     };
     Ok(response)
+}
+
+fn is_api_host(request: &Request<Incoming>, state: &AppState) -> bool {
+    let Some(domain) = state.http_domain.as_deref() else {
+        return false;
+    };
+    let Some(host) = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| request.uri().authority().map(|value| value.as_str()))
+    else {
+        return false;
+    };
+    let hostname = host
+        .trim_end_matches('.')
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    hostname.eq_ignore_ascii_case(&format!("api.{domain}"))
 }
 
 async fn forward_http_request(
