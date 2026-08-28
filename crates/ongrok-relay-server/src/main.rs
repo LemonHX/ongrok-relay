@@ -1,5 +1,6 @@
 //! ongrok relay server binary entry point.
 
+mod config;
 mod server;
 mod state;
 mod store;

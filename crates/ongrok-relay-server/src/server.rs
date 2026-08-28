@@ -1,11 +1,12 @@
 use crate::{
+    config::{Cli, Command, RunOptions, TokenCommand, validate_tls_material},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
     store::ServiceStore,
     wire::{now_unix_ms, read_control_frame, write_control_frame},
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{Method, Request, Response, StatusCode, body::Incoming, header};
 use hyper::{client::conn::http1, service::service_fn};
@@ -18,16 +19,13 @@ use libongrok::{
 use mimalloc::MiMalloc;
 use quinn::crypto::rustls::QuicServerConfig;
 use redb::Database;
-use rustls::{ServerConfig, pki_types::CertificateDer};
+use rustls::ServerConfig;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     convert::Infallible,
     error::Error,
-    fs::File,
-    io::BufReader,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -277,95 +275,6 @@ type IngressBody = BoxBody<Bytes, ProxyError>;
 trait RelayIo: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T> RelayIo for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
 type BoxedIo = Box<dyn RelayIo>;
-
-#[derive(Parser, Debug)]
-#[command(name = "ongrok-relay-server", version, about = "ongrok relay server")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Initialize an empty control database and print fresh long-lived tokens.
-    Init {
-        #[arg(long, env = "ONGROK_DB_PATH", default_value = "ongrok.redb")]
-        db_path: PathBuf,
-    },
-    /// Validate certificate, key, and database paths without starting listeners.
-    Doctor {
-        #[arg(long, env = "ONGROK_TLS_CERT")]
-        tls_cert: PathBuf,
-        #[arg(long, env = "ONGROK_TLS_KEY")]
-        tls_key: PathBuf,
-        #[arg(long, env = "ONGROK_DB_PATH", default_value = "ongrok.redb")]
-        db_path: PathBuf,
-    },
-    /// Print a new long-lived token. Persist it through the admin API in later phases.
-    Token {
-        #[command(subcommand)]
-        command: TokenCommand,
-    },
-    /// Validate certificate material and start the control API listener.
-    Run {
-        #[command(flatten)]
-        options: Box<RunOptions>,
-    },
-}
-
-#[derive(Args, Debug)]
-struct RunOptions {
-    #[arg(long, env = "ONGROK_TLS_CERT")]
-    tls_cert: PathBuf,
-    #[arg(long, env = "ONGROK_TLS_KEY")]
-    tls_key: PathBuf,
-    #[arg(long, env = "ONGROK_API_LISTEN", default_value = "127.0.0.1:8080")]
-    api_listen: SocketAddr,
-    #[arg(long, env = "ONGROK_QUIC_LISTEN", default_value = "0.0.0.0:443")]
-    quic_listen: SocketAddr,
-    #[arg(long, env = "ONGROK_TCP_TLS_LISTEN", default_value = "0.0.0.0:443")]
-    tcp_tls_listen: SocketAddr,
-    #[arg(long, env = "ONGROK_HTTP_LISTEN")]
-    http_listen: Option<SocketAddr>,
-    #[arg(long, env = "ONGROK_HTTPS_LISTEN")]
-    https_listen: Option<SocketAddr>,
-    #[arg(long, env = "ONGROK_HTTP_DOMAIN")]
-    http_domain: Option<String>,
-    #[arg(long, env = "ONGROK_PUBLIC_HOST", default_value = "localhost")]
-    public_host: String,
-    #[arg(long, env = "ONGROK_TCP_PORT_START", default_value_t = 20_000)]
-    tcp_port_start: u16,
-    #[arg(long, env = "ONGROK_TCP_PORT_END", default_value_t = 30_000)]
-    tcp_port_end: u16,
-    #[arg(long, env = "ONGROK_ADMIN_TOKEN")]
-    admin_token: String,
-    #[arg(long, env = "ONGROK_USER_TOKEN")]
-    user_token: String,
-    #[arg(long, env = "ONGROK_DB_PATH", default_value = "ongrok.redb")]
-    db_path: PathBuf,
-}
-
-#[derive(Subcommand, Debug)]
-enum TokenCommand {
-    Create {
-        #[arg(long, value_enum)]
-        kind: TokenKindArg,
-    },
-}
-
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-enum TokenKindArg {
-    Admin,
-    User,
-}
-impl From<TokenKindArg> for TokenKind {
-    fn from(value: TokenKindArg) -> Self {
-        match value {
-            TokenKindArg::Admin => Self::Admin,
-            TokenKindArg::User => Self::User,
-        }
-    }
-}
 
 #[cfg(any())]
 #[derive(Clone)]
@@ -629,27 +538,6 @@ pub(crate) async fn run_cli() -> Result<()> {
             .await
         }
     }
-}
-
-fn validate_tls_material(cert_path: &PathBuf, key_path: &PathBuf) -> Result<Arc<ServerConfig>> {
-    let cert_file = File::open(cert_path)
-        .with_context(|| format!("failed to open certificate file {}", cert_path.display()))?;
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
-        .collect::<Result<_, _>>()
-        .context("failed to parse PEM certificate chain")?;
-    if certs.is_empty() {
-        anyhow::bail!("certificate chain is empty");
-    }
-    let key_file = File::open(key_path)
-        .with_context(|| format!("failed to open private key file {}", key_path.display()))?;
-    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
-        .context("failed to parse PEM private key")?
-        .context("private key file contains no usable key")?;
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("certificate chain and private key do not match")?;
-    Ok(Arc::new(config))
 }
 
 async fn run(
