@@ -1,0 +1,49 @@
+name: Release bundle
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - name: Build release binaries
+        run: cargo build --workspace --release --target x86_64-unknown-linux-musl
+      - name: Build frontend
+        run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: frontend
+      - name: Assemble and checksum bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="ongrok-${GITHUB_REF_NAME}-x86_64-linux-musl"
+          mkdir -p "release/$bundle/frontend" "release/$bundle/deploy"
+          install -m 0755 target/x86_64-unknown-linux-musl/release/ongrok-relay-server "release/$bundle/ongrok-relay-server"
+          install -m 0755 target/x86_64-unknown-linux-musl/release/ongrok-relay-client "release/$bundle/ongrok-relay-client"
+          cp -R frontend/dist/. "release/$bundle/frontend/"
+          cp -R deploy/. "release/$bundle/deploy/"
+          cp README.md design.md techspec.md PLAN.md "release/$bundle/"
+          tar -C release -czf "release/$bundle.tar.gz" "$bundle"
+          sha256sum "release/$bundle.tar.gz" > "release/$bundle.tar.gz.sha256"
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.tar.gz
+            release/*.sha256
