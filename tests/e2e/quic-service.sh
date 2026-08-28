@@ -59,7 +59,7 @@ wait_for_chunked_http_response() {
 
 wait_for_https_response() {
   for _ in $(seq 1 50); do
-    response=$(curl --noproxy '*' -kfsS --resolve secure.example.test:18082:127.0.0.1 \
+    response=$(curl --noproxy '*' --http2 -kfsS --resolve secure.example.test:18082:127.0.0.1 \
       'https://secure.example.test:18082/secure?from=e2e' 2>/dev/null || true)
     if test "$response" = 'path=/secure?from=e2e host=secure.example.test:18082'; then
       return 0

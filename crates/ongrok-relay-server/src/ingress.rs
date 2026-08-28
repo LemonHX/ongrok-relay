@@ -9,7 +9,10 @@ use hyper::{
     HeaderMap, Request, Response, StatusCode, body::Incoming, client::conn::http1, header,
     service::service_fn,
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::{
+    rt::{TokioExecutor, TokioIo},
+    server::conn::auto,
+};
 use libongrok::Protocol;
 use rustls::ServerConfig;
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -38,8 +41,9 @@ pub(crate) async fn run_http_ingress(address: std::net::SocketAddr, state: AppSt
             let service = service_fn(move |request| {
                 http_ingress_handler(request, Arc::clone(&state), Protocol::Http)
             });
-            if let Err(error) = hyper::server::conn::http1::Builder::new()
-                .max_buf_size(MAX_HTTP_BUFFER_BYTES)
+            let mut builder = auto::Builder::new(TokioExecutor::new());
+            builder.http1().max_buf_size(MAX_HTTP_BUFFER_BYTES);
+            if let Err(error) = builder
                 .serve_connection(TokioIo::new(stream), service)
                 .await
             {
@@ -58,7 +62,7 @@ pub(crate) async fn run_https_ingress(
         .await
         .with_context(|| format!("failed to bind HTTPS ingress at {address}"))?;
     let mut config = (*tls).clone();
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(config));
     info!(%address, "HTTPS ingress listening");
     let state = Arc::new(state);
@@ -77,11 +81,12 @@ pub(crate) async fn run_https_ingress(
                 let service = service_fn(move |request| {
                     http_ingress_handler(request, Arc::clone(&state), Protocol::Https)
                 });
-                hyper::server::conn::http1::Builder::new()
-                    .max_buf_size(MAX_HTTP_BUFFER_BYTES)
+                let mut builder = auto::Builder::new(TokioExecutor::new());
+                builder.http1().max_buf_size(MAX_HTTP_BUFFER_BYTES);
+                builder
                     .serve_connection(TokioIo::new(stream), service)
                     .await
-                    .context("HTTPS ingress connection failed")
+                    .map_err(|error| anyhow::anyhow!("HTTPS ingress connection failed: {error}"))
             }
             .await;
             if let Err(error) = result {
