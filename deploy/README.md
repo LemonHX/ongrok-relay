@@ -28,6 +28,13 @@ external state and must be backed up before upgrades.
 The server does not issue or renew certificates. Use an external ACME client
 or certificate provider, then restart the server after replacing the PEM files.
 
+## Cloudflare Pages
+
+`.github/workflows/pages.yml` deploys the React console after changes under
+`frontend/`. Configure repository secrets `CF_API_TOKEN`, `CF_ACCOUNT_ID`, and
+`CF_PAGES_PROJECT` to enable it. The workflow is skipped when those secrets are
+absent, so backend-only CI remains independent of Cloudflare credentials.
+
 ## Windows
 
 See `windows-service.md`. Use a dedicated service account and an established
