@@ -3,7 +3,7 @@ use crate::{
         AuthResponse, ErrorResponse, HealthResponse, ServiceCreateRequest, ServiceView,
         TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
     },
-    config::{Cli, Command, RunOptions, TokenCommand, validate_tls_material},
+    config::{Cli, Command, RunOptions, TokenCommand, validate_run_options, validate_tls_material},
     ingress::{run_http_ingress, run_https_ingress},
     relay::{ensure_tcp_ingress, first_available_tcp_port},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
@@ -421,6 +421,7 @@ pub(crate) async fn run_cli() -> Result<()> {
             Ok(())
         }
         Command::Run { options } => {
+            validate_run_options(&options)?;
             let RunOptions {
                 tls_cert,
                 tls_key,
@@ -437,14 +438,6 @@ pub(crate) async fn run_cli() -> Result<()> {
                 user_token,
                 db_path,
             } = *options;
-            if tcp_port_start > tcp_port_end {
-                anyhow::bail!("tcp port start must not exceed tcp port end");
-            }
-            if (http_listen.is_some() || https_listen.is_some()) != http_domain.is_some() {
-                anyhow::bail!(
-                    "--http-domain is required when --http-listen or --https-listen is configured"
-                );
-            }
             let tls = validate_tls_material(&tls_cert, &tls_key)?;
             let store = Arc::new(ServiceStore::open(&db_path)?);
             let services = store.load_services()?;

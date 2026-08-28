@@ -129,3 +129,70 @@ pub(crate) fn validate_tls_material(
     let _ = QuicServerConfig::try_from(server.clone()).context("failed to configure QUIC TLS")?;
     Ok(Arc::new(server))
 }
+
+pub(crate) fn validate_run_options(options: &RunOptions) -> Result<()> {
+    if options.tcp_port_start > options.tcp_port_end {
+        anyhow::bail!("tcp port start must not exceed tcp port end");
+    }
+    if (options.http_listen.is_some() || options.https_listen.is_some())
+        != options.http_domain.is_some()
+    {
+        anyhow::bail!(
+            "--http-domain is required when --http-listen or --https-listen is configured"
+        );
+    }
+    if options.http_domain.as_deref().is_some_and(|domain| {
+        domain.is_empty() || domain.len() > 253 || domain.chars().any(char::is_whitespace)
+    }) {
+        anyhow::bail!("--http-domain must be a non-empty hostname without whitespace");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RunOptions, validate_run_options};
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+
+    fn options() -> RunOptions {
+        RunOptions {
+            tls_cert: PathBuf::from("cert.pem"),
+            tls_key: PathBuf::from("key.pem"),
+            api_listen: "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
+            quic_listen: "0.0.0.0:443".parse::<SocketAddr>().unwrap(),
+            tcp_tls_listen: "0.0.0.0:443".parse::<SocketAddr>().unwrap(),
+            http_listen: None,
+            https_listen: None,
+            http_domain: None,
+            public_host: "example.test".to_owned(),
+            tcp_port_start: 20_000,
+            tcp_port_end: 30_000,
+            admin_token: "admin".to_owned(),
+            user_token: "user".to_owned(),
+            db_path: PathBuf::from("ongrok.redb"),
+        }
+    }
+
+    #[test]
+    fn rejects_reversed_port_range() {
+        let mut value = options();
+        value.tcp_port_start = 30_001;
+        assert!(validate_run_options(&value).is_err());
+    }
+
+    #[test]
+    fn requires_domain_for_http_listener() {
+        let mut value = options();
+        value.http_listen = Some("0.0.0.0:80".parse().unwrap());
+        assert!(validate_run_options(&value).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_http_configuration() {
+        let mut value = options();
+        value.https_listen = Some("0.0.0.0:443".parse().unwrap());
+        value.http_domain = Some("relay.example.test".to_owned());
+        assert!(validate_run_options(&value).is_ok());
+    }
+}

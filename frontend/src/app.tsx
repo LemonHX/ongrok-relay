@@ -12,6 +12,7 @@ import {
 import { FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppTheme, type Theme } from "./theme";
+import { endpointLabel, metricPoints, type MetricSample } from "./view-model";
 
 type Service = {
   service_id: string;
@@ -34,11 +35,7 @@ type Node = {
   last_heartbeat_at_unix_ms: number | null;
   metadata: { hostname: string; os: string; arch: string; client_version: string };
 };
-type Metric = {
-  recorded_at_unix_ms: number;
-  rtt_ms: number | null;
-  snapshot: { cpu_percent: number | null; memory_percent: number | null; load_average: number | null };
-};
+type Metric = MetricSample;
 type Auth = { kind: string };
 
 export function App() {
@@ -253,8 +250,7 @@ export function App() {
                         <td>{service.protocol}</td>
                         <td>{service.node_id}</td>
                         <td>
-                          {service.public_host ?? "--"}
-                          {service.public_port ? ":" + service.public_port : ""}
+                          {endpointLabel(service.public_host, service.public_port)}
                         </td>
                         <td className={service.status === "Online" ? "online" : "offline"}>
                           <Activity size={13} /> {t("online")}
@@ -297,12 +293,7 @@ function NodePanel({ nodes, metrics, syncStatus }: { nodes: Node[]; metrics: Met
 }
 
 function MetricChart({ metrics }: { metrics: Metric[] }) {
-  const points = metrics.slice(-60).flatMap((metric, index, values) => {
-    const value = metric.snapshot.cpu_percent;
-    if (value == null) return [];
-    const x = values.length < 2 ? 0 : (index / (values.length - 1)) * 100;
-    return [`${x},${100 - Math.min(100, Math.max(0, value))}`];
-  });
+  const points = metricPoints(metrics, (metric) => metric.snapshot.cpu_percent);
   return (
     <div className="chart">
       <div className="chart-label"><span>CPU</span><span>{metrics.length} samples</span></div>
