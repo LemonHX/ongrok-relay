@@ -6,7 +6,7 @@
 
 - 核心语言：Rust
 - 异步运行时：Tokio
-- 首选传输：QUIC，使用 Quinn
+- 首选传输：QUIC，使用 Quinn（关闭默认 `platform-verifier`，仅启用 Tokio runtime + rustls-ring）
 - TCP fallback：TLS over TCP，使用 Yamux 做 multiplexing
 - TLS：rustls/tokio-rustls
 - 控制面数据库：redb（单 server 部署）
@@ -88,6 +88,7 @@ redb 是嵌入式单机存储，不承担多台 server 的共享一致性或跨�
 ## 3. TLS 证书与 musl
 
 - 全部 TLS 使用 rustls，不链接 OpenSSL，也不使用系统 TLS 实现。
+- Quinn 的 `platform-verifier` 默认特性关闭；client/server 显式提供 rustls `ClientConfig`，根证书来自指定 PEM 或项目内置 roots，不读取系统证书库。
 - server 启动时由用户提供 PEM full chain 和对应 PEM 私钥路径。
 - server 不负责 ACME、签发、续期、DNS challenge 或证书安装。
 - QUIC listener、TCP/TLS/Yamux listener 和 HTTPS ingress 复用同一组证书材料，但分别构造合适的 rustls/Quinn 配置。
