@@ -58,6 +58,17 @@ enum Command {
     Init,
     /// Show the stable local node identity.
     Status,
+    /// Validate local identity, CA material, and relay transport reachability.
+    Doctor {
+        #[arg(long, env = "ONGROK_QUIC_SERVER")]
+        server: SocketAddr,
+        #[arg(long, env = "ONGROK_SERVER_NAME", default_value = "localhost")]
+        server_name: String,
+        #[arg(long, env = "ONGROK_CA_CERT")]
+        ca_cert: PathBuf,
+        #[arg(long, env = "ONGROK_TCP_TLS_SERVER")]
+        tcp_tls_server: Option<SocketAddr>,
+    },
     /// Connect to the relay over QUIC and register this node.
     Run {
         #[arg(long, env = "ONGROK_QUIC_SERVER")]
@@ -166,6 +177,23 @@ async fn main() -> Result<()> {
             println!("state_path={}", path.display());
             Ok(())
         }
+        Command::Doctor {
+            server,
+            server_name,
+            ca_cert,
+            tcp_tls_server,
+        } => {
+            doctor(
+                cli.state_dir,
+                RelayEndpoints {
+                    quic: server,
+                    tcp_tls: tcp_tls_server,
+                },
+                &server_name,
+                &ca_cert,
+            )
+            .await
+        }
         Command::Services {
             command: ServicesCommand::List { server, token },
         } => services_list(&server, &token).await,
@@ -235,6 +263,91 @@ async fn main() -> Result<()> {
             .await
         }
     }
+}
+
+async fn doctor(
+    state_dir: Option<PathBuf>,
+    endpoints: RelayEndpoints,
+    server_name: &str,
+    ca_cert: &PathBuf,
+) -> Result<()> {
+    let path = state_path(state_dir)?;
+    let state = load_or_create_state(&path)?;
+    println!(
+        "identity=ok node_id={} state_path={}",
+        state.node_id.0,
+        path.display()
+    );
+    load_roots(ca_cert)?;
+    println!("ca=ok path={}", ca_cert.display());
+
+    let quic = probe_quic(endpoints.quic, server_name, ca_cert).await;
+    match &quic {
+        Ok(()) => println!("quic=ok address={}", endpoints.quic),
+        Err(error) => println!("quic=unavailable address={} error={error}", endpoints.quic),
+    }
+    let tcp_tls = match endpoints.tcp_tls {
+        Some(address) => {
+            let result = probe_tcp_tls(address, server_name, ca_cert).await;
+            match &result {
+                Ok(()) => println!("tcp_tls=ok address={address}"),
+                Err(error) => println!("tcp_tls=unavailable address={address} error={error}"),
+            }
+            Some(result)
+        }
+        None => {
+            println!("tcp_tls=not_configured");
+            None
+        }
+    };
+    if quic.is_ok() || tcp_tls.as_ref().is_some_and(Result::is_ok) {
+        println!("relay=reachable");
+        Ok(())
+    } else {
+        anyhow::bail!("no configured relay transport is reachable")
+    }
+}
+
+async fn probe_quic(server: SocketAddr, server_name: &str, ca_cert: &PathBuf) -> Result<()> {
+    let roots = load_roots(ca_cert)?;
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"ongrok/1".to_vec()];
+    let config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
+    endpoint.set_default_client_config(config);
+    let connection = timeout(
+        Duration::from_secs(10),
+        endpoint.connect(server, server_name)?.into_future(),
+    )
+    .await
+    .context("QUIC probe timed out")?
+    .context("QUIC probe handshake failed")?;
+    connection.close(0_u32.into(), b"doctor complete");
+    endpoint.wait_idle().await;
+    Ok(())
+}
+
+async fn probe_tcp_tls(server: SocketAddr, server_name: &str, ca_cert: &PathBuf) -> Result<()> {
+    let roots = load_roots(ca_cert)?;
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"ongrok/1".to_vec()];
+    let connector = TlsConnector::from(Arc::new(crypto));
+    let socket = timeout(Duration::from_secs(10), TcpStream::connect(server))
+        .await
+        .context("TCP probe timed out")??;
+    let name = ServerName::try_from(server_name.to_owned())
+        .context("server name is not a valid DNS name")?;
+    let stream = timeout(Duration::from_secs(15), connector.connect(name, socket))
+        .await
+        .context("TCP/TLS probe handshake timed out")??;
+    if stream.get_ref().1.alpn_protocol() != Some(b"ongrok/1") {
+        anyhow::bail!("relay did not negotiate ongrok/1 over TCP/TLS");
+    }
+    Ok(())
 }
 
 fn state_path(override_dir: Option<PathBuf>) -> Result<PathBuf> {

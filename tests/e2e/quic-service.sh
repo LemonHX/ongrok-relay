@@ -139,6 +139,10 @@ HTTP_FIXTURE_PID=$!
 
 wait_for_health
 
+"$ROOT/target/debug/ongrok-relay-client" --state-dir "$TMP/doctor-state" doctor \
+  --server 127.0.0.1:14443 --server-name localhost --ca-cert "$TMP/cert.pem" \
+  | grep -q '^relay=reachable$'
+
 "$ROOT/target/debug/ongrok-relay-client" --state-dir "$TMP/state" service publish \
   --server 127.0.0.1:14443 --server-name localhost --ca-cert "$TMP/cert.pem" \
   --token user-test --name demo --local-address 127.0.0.1:18088 --protocol tcp --public-port 19001 \
