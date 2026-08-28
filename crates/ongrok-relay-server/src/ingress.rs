@@ -19,6 +19,7 @@ use tracing::{info, warn};
 
 type ProxyError = Box<dyn std::error::Error + Send + Sync>;
 type IngressBody = BoxBody<Bytes, ProxyError>;
+const MAX_HTTP_BUFFER_BYTES: usize = 64 * 1024;
 
 pub(crate) async fn run_http_ingress(address: std::net::SocketAddr, state: AppState) -> Result<()> {
     let listener = TcpListener::bind(address)
@@ -38,6 +39,7 @@ pub(crate) async fn run_http_ingress(address: std::net::SocketAddr, state: AppSt
                 http_ingress_handler(request, Arc::clone(&state), Protocol::Http)
             });
             if let Err(error) = hyper::server::conn::http1::Builder::new()
+                .max_buf_size(MAX_HTTP_BUFFER_BYTES)
                 .serve_connection(TokioIo::new(stream), service)
                 .await
             {
@@ -76,6 +78,7 @@ pub(crate) async fn run_https_ingress(
                     http_ingress_handler(request, Arc::clone(&state), Protocol::Https)
                 });
                 hyper::server::conn::http1::Builder::new()
+                    .max_buf_size(MAX_HTTP_BUFFER_BYTES)
                     .serve_connection(TokioIo::new(stream), service)
                     .await
                     .context("HTTPS ingress connection failed")

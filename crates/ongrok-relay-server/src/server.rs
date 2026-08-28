@@ -48,6 +48,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 const MAX_API_BODY_BYTES: usize = 16 * 1024;
+const MAX_HTTP_BUFFER_BYTES: usize = 64 * 1024;
 
 #[global_allocator]
 static ALLOCATOR: MiMalloc = MiMalloc;
@@ -230,7 +231,7 @@ async fn run_api(address: SocketAddr, state: AppState) -> Result<()> {
                 let state = Arc::clone(&state);
                 tasks.spawn(async move {
                     let service = service_fn(move |request| api_handler(request, Arc::clone(&state)));
-                    if let Err(error) = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(stream), service).await {
+                    if let Err(error) = hyper::server::conn::http1::Builder::new().max_buf_size(MAX_HTTP_BUFFER_BYTES).serve_connection(TokioIo::new(stream), service).await {
                         warn!(%peer, %error, "control API connection failed");
                     }
                 });

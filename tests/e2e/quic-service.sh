@@ -249,6 +249,12 @@ status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   --data "{\"service_name\":\"$oversized_body\"}" \
   http://127.0.0.1:18080/v1/services)
 test "$status" = 413
+oversized_header=$(python3 -c 'print("h" * 70000)')
+status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Host: web.example.test' \
+  -H "X-Ongrok-Large: $oversized_header" \
+  http://127.0.0.1:18081/hello 2>/dev/null || true)
+test "$status" = 431
 ACTIVE_USER_TOKEN=$(curl -fsS -X POST http://127.0.0.1:18080/v1/admin/tokens/rotate \
   -H 'Authorization: Bearer admin-test' -H 'Content-Type: application/json' \
   --data '{"kind":"User"}' | python3 -c 'import json, sys; value=json.load(sys.stdin); assert value["kind"] == "user"; print(value["token"])')
