@@ -4,6 +4,7 @@ use crate::{
         TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
     },
     config::{Cli, Command, RunOptions, TokenCommand, validate_tls_material},
+    ingress::{run_http_ingress, run_https_ingress},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
     store::ServiceStore,
     wire::{now_unix_ms, read_control_frame, write_control_frame},
@@ -11,9 +12,9 @@ use crate::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, Full};
+use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, body::Incoming, header};
-use hyper::{client::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use libongrok::{
     Frame, NodeMetric, NodeRecord, NodeStatus, PROTOCOL_VERSION, QuicIo, ServiceDefinition,
@@ -28,7 +29,6 @@ use serde::Serialize;
 use std::{
     collections::BTreeMap,
     convert::Infallible,
-    error::Error,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, RwLock},
     time::Duration,
@@ -274,11 +274,9 @@ impl ServiceStore {
 static ALLOCATOR: MiMalloc = MiMalloc;
 
 type ApiBody = Full<Bytes>;
-type ProxyError = Box<dyn Error + Send + Sync>;
-type IngressBody = BoxBody<Bytes, ProxyError>;
-trait RelayIo: AsyncRead + AsyncWrite + Send + Unpin {}
+pub(crate) trait RelayIo: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T> RelayIo for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
-type BoxedIo = Box<dyn RelayIo>;
+pub(crate) type BoxedIo = Box<dyn RelayIo>;
 
 #[cfg(any())]
 #[derive(Clone)]
@@ -578,155 +576,6 @@ async fn run_api(address: SocketAddr, state: AppState) -> Result<()> {
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     Ok(())
-}
-
-async fn run_http_ingress(address: SocketAddr, state: AppState) -> Result<()> {
-    let listener = TcpListener::bind(address)
-        .await
-        .with_context(|| format!("failed to bind HTTP ingress at {address}"))?;
-    info!(%address, "HTTP ingress listening");
-    let state = Arc::new(state);
-    let mut tasks = JoinSet::new();
-    loop {
-        let (stream, peer) = listener
-            .accept()
-            .await
-            .context("HTTP ingress accept failed")?;
-        let state = Arc::clone(&state);
-        tasks.spawn(async move {
-            let service = service_fn(move |request| {
-                http_ingress_handler(request, Arc::clone(&state), libongrok::Protocol::Http)
-            });
-            if let Err(error) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                warn!(%peer, %error, "HTTP ingress connection failed");
-            }
-        });
-    }
-}
-
-async fn run_https_ingress(
-    address: SocketAddr,
-    tls: Arc<ServerConfig>,
-    state: AppState,
-) -> Result<()> {
-    let listener = TcpListener::bind(address)
-        .await
-        .with_context(|| format!("failed to bind HTTPS ingress at {address}"))?;
-    let mut config = (*tls).clone();
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let acceptor = TlsAcceptor::from(Arc::new(config));
-    info!(%address, "HTTPS ingress listening");
-    let state = Arc::new(state);
-    loop {
-        let (stream, peer) = listener
-            .accept()
-            .await
-            .context("HTTPS ingress accept failed")?;
-        let acceptor = acceptor.clone();
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            let result = async {
-                let stream = timeout(Duration::from_secs(15), acceptor.accept(stream))
-                    .await
-                    .context("HTTPS ingress handshake timed out")??;
-                let service = service_fn(move |request| {
-                    http_ingress_handler(request, Arc::clone(&state), libongrok::Protocol::Https)
-                });
-                hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), service)
-                    .await
-                    .context("HTTPS ingress connection failed")
-            }
-            .await;
-            if let Err(error) = result {
-                warn!(%peer, %error, "HTTPS ingress connection failed");
-            }
-        });
-    }
-}
-
-async fn http_ingress_handler(
-    request: Request<Incoming>,
-    state: Arc<AppState>,
-    protocol: libongrok::Protocol,
-) -> Result<Response<IngressBody>, Infallible> {
-    let response = match forward_http_request(request, state, protocol).await {
-        Ok(response) => response,
-        Err(error) => {
-            warn!(%error, "HTTP ingress request failed");
-            ingress_error(StatusCode::BAD_GATEWAY, "service is unavailable")
-        }
-    };
-    Ok(response)
-}
-
-async fn forward_http_request(
-    request: Request<Incoming>,
-    state: Arc<AppState>,
-    protocol: libongrok::Protocol,
-) -> Result<Response<IngressBody>> {
-    let host = request_host(&request).context("HTTP request is missing a Host header")?;
-    let service = state
-        .services
-        .lock()
-        .await
-        .values()
-        .find(|service| {
-            service.protocol == protocol && service.public_host.as_deref() == Some(host.as_str())
-        })
-        .cloned()
-        .context("no HTTP service is registered for host")?;
-    let (tunnel, _) = open_client_stream(&state, service.service_id).await?;
-    let (mut sender, connection) = http1::handshake(TokioIo::new(tunnel))
-        .await
-        .context("failed to establish HTTP tunnel connection")?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::debug!(%error, "HTTP tunnel connection ended");
-        }
-    });
-    let response = sender
-        .send_request(request)
-        .await
-        .context("local HTTP service request failed")?;
-    Ok(response.map(|body| {
-        body.map_err(|error| -> ProxyError { Box::new(error) })
-            .boxed()
-    }))
-}
-
-fn request_host(request: &Request<Incoming>) -> Option<String> {
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .or_else(|| {
-            request
-                .uri()
-                .authority()
-                .map(|authority| authority.as_str())
-        })?;
-    Some(
-        host.trim_end_matches('.')
-            .split(':')
-            .next()?
-            .to_ascii_lowercase(),
-    )
-}
-
-fn ingress_error(status: StatusCode, message: &'static str) -> Response<IngressBody> {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(
-            Full::new(Bytes::from_static(message.as_bytes()))
-                .map_err(|never| match never {})
-                .boxed(),
-        )
-        .expect("ingress error response is valid")
 }
 
 async fn run_quic(address: SocketAddr, tls: Arc<ServerConfig>, state: AppState) -> Result<()> {
@@ -1303,7 +1152,7 @@ async fn forward_tcp_connection(
     Ok(())
 }
 
-async fn open_client_stream(
+pub(crate) async fn open_client_stream(
     state: &AppState,
     service_id: ServiceId,
 ) -> Result<(BoxedIo, TunnelId)> {
