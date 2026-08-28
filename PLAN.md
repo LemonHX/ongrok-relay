@@ -161,7 +161,7 @@ ongrok-relay-server token revoke <id>
 ongrok-relay-server doctor
 ```
 
-当前已实现 `init`（创建空 redb 数据库并生成 admin/user token）和 `doctor`（证书链/私钥匹配与数据库可读性）。配置文件优先级、端口/权限检查和 QUIC UDP 可达性提示仍待实现；目标顺序为 CLI > environment > config file > defaults。
+当前已实现 `init`（创建空 redb 数据库并生成 admin/user token）和 `doctor`（证书链/私钥匹配与数据库可读性）。server `run` 支持 TOML 配置文件（`--config` / `ONGROK_CONFIG`），优先级为 CLI > environment > config file > defaults。端口/权限检查和 QUIC UDP 可达性提示仍待实现。
 
 ### 4.2 Listener
 
