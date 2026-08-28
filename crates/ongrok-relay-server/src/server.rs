@@ -769,7 +769,7 @@ pub(crate) async fn open_client_stream(
     }
 }
 
-async fn api_handler(
+pub(crate) async fn api_handler(
     request: Request<Incoming>,
     state: Arc<AppState>,
 ) -> Result<Response<ApiBody>, Infallible> {
