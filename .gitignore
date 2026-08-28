@@ -1,4 +1,5 @@
 .server-credentials.local.md
+.DEPLOY.md
 .env
 .env.*
 !.env.example

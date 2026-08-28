@@ -107,9 +107,10 @@ ACTIVE_USER_TOKEN=user-test
 CLIENT_PID=0
 HTTP_CLIENT_PID=0
 HTTPS_CLIENT_PID=0
+BROKEN_CLIENT_PID=0
 ECHO_PID=0
 HTTP_FIXTURE_PID=0
-trap 'kill "$SERVER_PID" "$CLIENT_PID" "$HTTP_CLIENT_PID" "$HTTPS_CLIENT_PID" "$ECHO_PID" "$HTTP_FIXTURE_PID" 2>/dev/null || true' EXIT
+trap 'kill "$SERVER_PID" "$CLIENT_PID" "$HTTP_CLIENT_PID" "$HTTPS_CLIENT_PID" "$BROKEN_CLIENT_PID" "$ECHO_PID" "$HTTP_FIXTURE_PID" 2>/dev/null || true' EXIT
 
 "$ROOT/target/debug/ongrok-relay-server" run \
   --tls-cert "$TMP/cert.pem" --tls-key "$TMP/key.pem" \
@@ -198,6 +199,12 @@ HTTP_CLIENT_PID=$!
   >"$TMP/https-client.log" 2>&1 &
 HTTPS_CLIENT_PID=$!
 
+"$ROOT/target/debug/ongrok-relay-client" --state-dir "$TMP/broken-state" service publish \
+  --server 127.0.0.1:14443 --server-name localhost --ca-cert "$TMP/cert.pem" \
+  --token user-test --name broken --local-address 127.0.0.1:1 --protocol http \
+  >"$TMP/broken-client.log" 2>&1 &
+BROKEN_CLIENT_PID=$!
+
 wait_for_tcp_echo
 wait_for_http_response
 wait_for_chunked_http_response
@@ -205,6 +212,10 @@ wait_for_https_response
 status=$(curl -sS -o /dev/null -w '%{http_code}' \
   -H 'Host: unknown.example.test' \
   http://127.0.0.1:18081/should-not-route)
+test "$status" = 502
+status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Host: broken.example.test' \
+  http://127.0.0.1:18081/local-target-refused)
 test "$status" = 502
 "$ROOT/target/debug/ongrok-relay-client" services list \
   --server http://127.0.0.1:18080 --token user-test \

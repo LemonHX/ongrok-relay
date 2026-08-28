@@ -116,7 +116,24 @@ async fn forward_http_request(
     state: Arc<AppState>,
     protocol: Protocol,
 ) -> Result<Response<IngressBody>> {
-    let host = request_host(&request).context("HTTP request is missing a Host header")?;
+    let forwarded_host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| {
+            request
+                .uri()
+                .authority()
+                .map(|value| value.as_str().to_owned())
+        })
+        .context("HTTP request is missing a Host header")?;
+    let host = forwarded_host
+        .trim_end_matches('.')
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let service = state
         .services
         .lock()
@@ -128,6 +145,20 @@ async fn forward_http_request(
         .cloned()
         .context("no HTTP service is registered for host")?;
     let (tunnel, _) = open_client_stream(&state, service.service_id).await?;
+    // HTTP/2 clients may present an absolute-form URI. The local HTTP/1
+    // tunnel expects origin-form and a conventional Host header.
+    request.headers_mut().insert(
+        header::HOST,
+        forwarded_host.parse().context("invalid HTTP host")?,
+    );
+    let target = request
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/")
+        .parse()
+        .context("invalid HTTP request target")?;
+    *request.uri_mut() = target;
     strip_hop_by_hop_headers(request.headers_mut());
     let (mut sender, connection) = http1::handshake(TokioIo::new(tunnel))
         .await
@@ -173,25 +204,6 @@ fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
     ] {
         headers.remove(name);
     }
-}
-
-fn request_host(request: &Request<Incoming>) -> Option<String> {
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .or_else(|| {
-            request
-                .uri()
-                .authority()
-                .map(|authority| authority.as_str())
-        })?;
-    Some(
-        host.trim_end_matches('.')
-            .split(':')
-            .next()?
-            .to_ascii_lowercase(),
-    )
 }
 
 fn ingress_error(status: StatusCode, message: &'static str) -> Response<IngressBody> {
