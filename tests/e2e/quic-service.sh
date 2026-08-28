@@ -173,6 +173,11 @@ print(nodes[0]["node_id"])
 ')
 curl -fsS -H 'Authorization: Bearer user-test' "http://127.0.0.1:18080/v1/nodes/$node_id/metrics" \
   | grep -q '"cpu_percent"'
+status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  -H 'Authorization: Bearer user-test' -H 'Content-Type: application/json' \
+  --data '{"service_name":"missing","node_id":"00000000-0000-7000-8000-000000000000","protocol":"Tcp","local_address":"127.0.0.1:1"}' \
+  http://127.0.0.1:18080/v1/services)
+test "$status" = 404
 status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/v1/services)
 test "$status" != 200
 ACTIVE_USER_TOKEN=$(curl -fsS -X POST http://127.0.0.1:18080/v1/admin/tokens/rotate \
@@ -182,6 +187,11 @@ status=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer user-
 test "$status" = 401
 wait_for_node_offline
 assert_tcp_relay_is_offline
+status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  -H "Authorization: Bearer $ACTIVE_USER_TOKEN" -H 'Content-Type: application/json' \
+  --data "{\"service_name\":\"offline\",\"node_id\":\"$node_id\",\"protocol\":\"Tcp\",\"local_address\":\"127.0.0.1:1\"}" \
+  http://127.0.0.1:18080/v1/services)
+test "$status" = 409
 curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v1/services \
   | grep -q '"service_name":"secure"'
 

@@ -1269,6 +1269,28 @@ async fn api_handler(
                 ));
             }
         };
+        let node_status = state
+            .nodes
+            .lock()
+            .await
+            .get(&request.node_id)
+            .map(|node| node.status);
+        let Some(node_status) = node_status else {
+            return Ok(json(
+                StatusCode::NOT_FOUND,
+                &ErrorResponse {
+                    error: "node not found",
+                },
+            ));
+        };
+        if node_status != NodeStatus::Online {
+            return Ok(json(
+                StatusCode::CONFLICT,
+                &ErrorResponse {
+                    error: "node is offline",
+                },
+            ));
+        }
         let node_id = request.node_id;
         return Ok(
             match register_service(request.into_definition(), node_id, &state).await {
