@@ -222,6 +222,7 @@ uuid_id!(NodeId);
 uuid_id!(ServiceId);
 uuid_id!(TunnelId);
 uuid_id!(PortLeaseId);
+uuid_id!(EventId);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum TokenKind {
@@ -248,6 +249,16 @@ pub enum ServiceStatus {
 pub enum NodeStatus {
     Online,
     Offline,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum EventKind {
+    NodeOnline,
+    NodeOffline,
+    ServiceRegistered,
+    ServiceDeleted,
+    TokenRotated,
+    TokenRevoked,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -364,6 +375,16 @@ pub struct NodeMetric {
     pub recorded_at_unix_ms: i64,
     pub rtt_ms: Option<u32>,
     pub snapshot: HeartbeatSnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlEvent {
+    pub event_id: EventId,
+    pub occurred_at_unix_ms: i64,
+    pub kind: EventKind,
+    pub node_id: Option<NodeId>,
+    pub service_id: Option<ServiceId>,
+    pub token_kind: Option<TokenKind>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

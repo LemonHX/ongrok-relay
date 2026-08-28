@@ -19,9 +19,9 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, body::Incoming, header};
 use hyper_util::rt::TokioIo;
 use libongrok::{
-    Frame, NodeMetric, NodeRecord, NodeStatus, PROTOCOL_VERSION, QuicIo, ServiceDefinition,
-    ServiceId, ServiceStatus, TokenKind, TransportKind, TunnelId, YamuxIo, YamuxSession,
-    generate_token, hash_token, validate_service_name,
+    ControlEvent, EventId, EventKind, Frame, NodeMetric, NodeRecord, NodeStatus, PROTOCOL_VERSION,
+    QuicIo, ServiceDefinition, ServiceId, ServiceStatus, TokenKind, TransportKind, TunnelId,
+    YamuxIo, YamuxSession, generate_token, hash_token, validate_service_name,
 };
 use mimalloc::MiMalloc;
 use redb::Database;
@@ -637,6 +637,7 @@ pub(crate) async fn handle_yamux_session(
                     };
                     state.nodes.lock().await.insert(node_id, node.clone());
                     state.store.put_node(&node)?;
+                    record_event(&state, EventKind::NodeOnline, Some(node_id), None, None);
                     registered_node = true;
                     info!(%remote, ?kind, "TCP/TLS Yamux node registered");
                 }
@@ -710,6 +711,7 @@ pub(crate) async fn handle_yamux_session(
             node.clone()
         }) {
             state.store.put_node(&node)?;
+            record_event(&state, EventKind::NodeOffline, Some(node_id), None, None);
         }
     }
     result
@@ -778,6 +780,13 @@ async fn register_service(
         state.store.delete(service_id)?;
         return Err(error).context("failed to activate TCP relay port");
     }
+    record_event(
+        state,
+        EventKind::ServiceRegistered,
+        Some(node_id),
+        Some(service_id),
+        None,
+    );
     Ok(service)
 }
 
@@ -794,6 +803,13 @@ async fn unregister_service(
         services.remove(&service_id);
         drop(services);
         state.store.delete(service_id)?;
+        record_event(
+            state,
+            EventKind::ServiceDeleted,
+            Some(node_id),
+            Some(service_id),
+            None,
+        );
         if let Some(task) = state.tcp_ingress_tasks.lock().await.remove(&service_id) {
             task.abort();
         }
@@ -900,6 +916,7 @@ pub(crate) async fn handle_quic_connection(
                 };
                 state.nodes.lock().await.insert(node_id, node.clone());
                 state.store.put_node(&node)?;
+                record_event(&state, EventKind::NodeOnline, Some(node_id), None, None);
                 registered_node = true;
                 info!(%remote, ?kind, "QUIC node registered");
             }
@@ -928,18 +945,7 @@ pub(crate) async fn handle_quic_connection(
                 }
             }
             Frame::UnregisterService { service_id } => {
-                let mut services = state.services.lock().await;
-                if services
-                    .get(&service_id)
-                    .is_some_and(|service| service.node_id == node_id)
-                {
-                    services.remove(&service_id);
-                    drop(services);
-                    state.store.delete(service_id)?;
-                    if let Some(task) = state.tcp_ingress_tasks.lock().await.remove(&service_id) {
-                        task.abort();
-                    }
-                }
+                unregister_service(service_id, node_id, &state).await?;
             }
             Frame::Heartbeat { snapshot } => {
                 let recorded_at_unix_ms = now_unix_ms();
@@ -1002,9 +1008,30 @@ pub(crate) async fn handle_quic_connection(
         };
         if let Some(node) = offline_node {
             state.store.put_node(&node)?;
+            record_event(&state, EventKind::NodeOffline, Some(node_id), None, None);
         }
     }
     Ok(())
+}
+
+fn record_event(
+    state: &AppState,
+    kind: EventKind,
+    node_id: Option<libongrok::NodeId>,
+    service_id: Option<ServiceId>,
+    token_kind: Option<TokenKind>,
+) {
+    let event = ControlEvent {
+        event_id: EventId::new(),
+        occurred_at_unix_ms: now_unix_ms(),
+        kind,
+        node_id,
+        service_id,
+        token_kind,
+    };
+    if let Err(error) = state.store.put_event(&event) {
+        warn!(%error, ?kind, "failed to persist control event");
+    }
 }
 
 pub(crate) async fn open_client_stream(
@@ -1098,6 +1125,13 @@ async fn api_handler(
                     },
                 ));
             }
+            record_event(
+                &state,
+                EventKind::TokenRotated,
+                None,
+                None,
+                Some(mutation.kind),
+            );
             return Ok(json(
                 StatusCode::OK,
                 &TokenRotationResponse {
@@ -1115,6 +1149,13 @@ async fn api_handler(
                 },
             ));
         }
+        record_event(
+            &state,
+            EventKind::TokenRevoked,
+            None,
+            None,
+            Some(mutation.kind),
+        );
         return Ok(json(
             StatusCode::OK,
             &TokenRevocationResponse {
@@ -1122,6 +1163,28 @@ async fn api_handler(
                 revoked: true,
             },
         ));
+    }
+    if request.method() == Method::GET && path == "/v1/events" {
+        return Ok(match authenticate(request.headers(), &state) {
+            Some(_) => match state.store.recent_events(200) {
+                Ok(events) => json(StatusCode::OK, &events),
+                Err(error) => {
+                    error!(%error, "failed to load control events");
+                    json(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &ErrorResponse {
+                            error: "failed to load events",
+                        },
+                    )
+                }
+            },
+            None => json(
+                StatusCode::UNAUTHORIZED,
+                &ErrorResponse {
+                    error: "invalid bearer token",
+                },
+            ),
+        });
     }
     if request.method() == Method::GET && path == "/v1/nodes" {
         return Ok(match authenticate(request.headers(), &state) {
@@ -1317,16 +1380,25 @@ async fn api_handler(
             (&Method::DELETE, _) => {
                 let removed = state.services.lock().await.remove(&service_id);
                 return Ok(match removed {
-                    Some(_) => {
+                    Some(service) => {
                         if let Some(task) = state.tcp_ingress_tasks.lock().await.remove(&service_id)
                         {
                             task.abort();
                         }
                         match state.store.delete(service_id) {
-                            Ok(()) => json(
-                                StatusCode::OK,
-                                &serde_json::json!({"deleted": true, "service_id": service_id }),
-                            ),
+                            Ok(()) => {
+                                record_event(
+                                    &state,
+                                    EventKind::ServiceDeleted,
+                                    Some(service.node_id),
+                                    Some(service_id),
+                                    None,
+                                );
+                                json(
+                                    StatusCode::OK,
+                                    &serde_json::json!({"deleted": true, "service_id": service_id }),
+                                )
+                            }
                             Err(error) => {
                                 error!(%error, "failed to delete service from store");
                                 json(
@@ -1570,6 +1642,13 @@ async fn replace_token(state: &AppState, kind: TokenKind, hash: Option<[u8; 32]>
     };
     for node in offline_nodes {
         state.store.put_node(&node)?;
+        record_event(
+            state,
+            EventKind::NodeOffline,
+            Some(node.node_id),
+            None,
+            None,
+        );
     }
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 use crate::state::TokenState;
 use anyhow::{Context, Result};
-use libongrok::{NodeId, NodeMetric, NodeRecord, ServiceDefinition, ServiceId};
+use libongrok::{ControlEvent, NodeId, NodeMetric, NodeRecord, ServiceDefinition, ServiceId};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::{collections::BTreeMap, path::Path};
 
@@ -10,6 +10,7 @@ const SERVICES_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("servi
 const NODES_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("nodes");
 const METRICS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metrics");
 const TOKENS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("tokens");
+const EVENTS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("events");
 const TOKEN_STATE_KEY: &str = "state";
 /// The dashboard needs recent history, not an unbounded time-series database.
 const METRIC_RETENTION_MS: i64 = 3 * 24 * 60 * 60 * 1_000;
@@ -37,6 +38,9 @@ impl ServiceStore {
         write_txn
             .open_table(TOKENS_TABLE)
             .context("failed to open tokens table")?;
+        write_txn
+            .open_table(EVENTS_TABLE)
+            .context("failed to open events table")?;
         write_txn
             .commit()
             .context("failed to initialize database")?;
@@ -242,12 +246,57 @@ impl ServiceStore {
         }
         Ok(metrics)
     }
+
+    pub(crate) fn put_event(&self, event: &ControlEvent) -> Result<()> {
+        let encoded = postcard::to_allocvec(event).context("failed to encode control event")?;
+        let key = format!(
+            "{:020}:{}",
+            event.occurred_at_unix_ms.max(0),
+            event.event_id.0
+        );
+        let txn = self
+            .db
+            .begin_write()
+            .context("failed to begin event write transaction")?;
+        {
+            let mut table = txn
+                .open_table(EVENTS_TABLE)
+                .context("failed to open events table")?;
+            table
+                .insert(key.as_str(), encoded.as_slice())
+                .context("failed to persist control event")?;
+        }
+        txn.commit().context("failed to commit control event")?;
+        Ok(())
+    }
+
+    pub(crate) fn recent_events(&self, limit: usize) -> Result<Vec<ControlEvent>> {
+        let txn = self
+            .db
+            .begin_read()
+            .context("failed to begin event read transaction")?;
+        let table = txn
+            .open_table(EVENTS_TABLE)
+            .context("failed to open events table")?;
+        let mut events = table
+            .iter()
+            .context("failed to iterate control events")?
+            .map(|item| {
+                let (_, value) = item.context("failed to read control event")?;
+                postcard::from_bytes::<ControlEvent>(value.value())
+                    .context("failed to decode control event")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        events.sort_by_key(|event| std::cmp::Reverse(event.occurred_at_unix_ms));
+        events.truncate(limit);
+        Ok(events)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libongrok::{HeartbeatSnapshot, NodeMetric};
+    use libongrok::{ControlEvent, EventId, EventKind, HeartbeatSnapshot, NodeMetric};
 
     fn metric(node_id: NodeId, recorded_at_unix_ms: i64, sequence: u64) -> NodeMetric {
         NodeMetric {
@@ -287,6 +336,32 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[test]
+    fn recent_events_are_newest_first_and_limited() -> Result<()> {
+        let path = std::env::temp_dir().join(format!("ongrok-events-{}.redb", NodeId::new().0));
+        let store = ServiceStore::open(&path)?;
+        for (occurred_at_unix_ms, kind) in [
+            (10, EventKind::NodeOnline),
+            (30, EventKind::ServiceRegistered),
+            (20, EventKind::NodeOffline),
+        ] {
+            store.put_event(&ControlEvent {
+                event_id: EventId::new(),
+                occurred_at_unix_ms,
+                kind,
+                node_id: None,
+                service_id: None,
+                token_kind: None,
+            })?;
+        }
+
+        let events = store.recent_events(2)?;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].occurred_at_unix_ms, 30);
+        assert_eq!(events[1].occurred_at_unix_ms, 20);
         Ok(())
     }
 }

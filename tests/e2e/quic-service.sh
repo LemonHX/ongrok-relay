@@ -176,6 +176,12 @@ curl -fsS -X PATCH -H 'Authorization: Bearer user-test' -H 'Content-Type: applic
   | grep -q '"environment":"e2e"'
 curl -fsS -H 'Authorization: Bearer user-test' "http://127.0.0.1:18080/v1/services/$service_id" \
   | grep -q '"owner":"relay-test"'
+curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/events | python3 -c '
+import json, sys
+kinds = {item["kind"] for item in json.load(sys.stdin)}
+assert "NodeOnline" in kinds
+assert "ServiceRegistered" in kinds
+'
 node_id=$(curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/nodes | python3 -c '
 import json, sys
 nodes = json.load(sys.stdin)
@@ -198,6 +204,12 @@ ACTIVE_USER_TOKEN=$(curl -fsS -X POST http://127.0.0.1:18080/v1/admin/tokens/rot
 status=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/services)
 test "$status" = 401
 wait_for_node_offline
+curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v1/events | python3 -c '
+import json, sys
+kinds = {item["kind"] for item in json.load(sys.stdin)}
+assert "TokenRotated" in kinds
+assert "NodeOffline" in kinds
+'
 assert_tcp_relay_is_offline
 status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: Bearer $ACTIVE_USER_TOKEN" -H 'Content-Type: application/json' \
