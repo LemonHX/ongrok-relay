@@ -4,8 +4,10 @@ use crate::{server::open_client_stream, state::AppState};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use hyper::header::HeaderName;
 use hyper::{
-    Request, Response, StatusCode, body::Incoming, client::conn::http1, header, service::service_fn,
+    HeaderMap, Request, Response, StatusCode, body::Incoming, client::conn::http1, header,
+    service::service_fn,
 };
 use hyper_util::rt::TokioIo;
 use libongrok::Protocol;
@@ -102,7 +104,7 @@ async fn http_ingress_handler(
 }
 
 async fn forward_http_request(
-    request: Request<Incoming>,
+    mut request: Request<Incoming>,
     state: Arc<AppState>,
     protocol: Protocol,
 ) -> Result<Response<IngressBody>> {
@@ -118,6 +120,7 @@ async fn forward_http_request(
         .cloned()
         .context("no HTTP service is registered for host")?;
     let (tunnel, _) = open_client_stream(&state, service.service_id).await?;
+    strip_hop_by_hop_headers(request.headers_mut());
     let (mut sender, connection) = http1::handshake(TokioIo::new(tunnel))
         .await
         .context("failed to establish HTTP tunnel connection")?;
@@ -130,10 +133,38 @@ async fn forward_http_request(
         .send_request(request)
         .await
         .context("local HTTP service request failed")?;
-    Ok(response.map(|body| {
+    let (mut parts, body) = response.into_parts();
+    strip_hop_by_hop_headers(&mut parts.headers);
+    Ok(Response::from_parts(
+        parts,
         body.map_err(|error| -> ProxyError { Box::new(error) })
-            .boxed()
-    }))
+            .boxed(),
+    ))
+}
+
+fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
+    let connection_names = headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|name| name.trim().parse::<HeaderName>().ok())
+        .collect::<Vec<_>>();
+    for name in connection_names {
+        headers.remove(name);
+    }
+    for name in [
+        header::CONNECTION,
+        HeaderName::from_static("keep-alive"),
+        header::PROXY_AUTHENTICATE,
+        header::PROXY_AUTHORIZATION,
+        header::TE,
+        header::TRAILER,
+        header::TRANSFER_ENCODING,
+        header::UPGRADE,
+    ] {
+        headers.remove(name);
+    }
 }
 
 fn request_host(request: &Request<Incoming>) -> Option<String> {
@@ -165,4 +196,27 @@ fn ingress_error(status: StatusCode, message: &'static str) -> Response<IngressB
                 .boxed(),
         )
         .expect("ingress error response is valid")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_hop_by_hop_headers;
+    use hyper::header::{CONNECTION, HeaderMap, HeaderName, HeaderValue};
+
+    #[test]
+    fn strips_standard_and_connection_declared_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONNECTION,
+            HeaderValue::from_static("x-tunnel-hop, keep-alive"),
+        );
+        headers.insert("x-tunnel-hop", HeaderValue::from_static("secret"));
+        headers.insert("keep-alive", HeaderValue::from_static("timeout=5"));
+        headers.insert("x-end-to-end", HeaderValue::from_static("kept"));
+        strip_hop_by_hop_headers(&mut headers);
+        assert!(!headers.contains_key(CONNECTION));
+        assert!(!headers.contains_key(HeaderName::from_static("x-tunnel-hop")));
+        assert!(!headers.contains_key(HeaderName::from_static("keep-alive")));
+        assert_eq!(headers["x-end-to-end"], "kept");
+    }
 }
