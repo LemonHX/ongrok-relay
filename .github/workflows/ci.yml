@@ -21,6 +21,16 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace
+      - name: Enforce rustls-only dependency boundary
+        shell: bash
+        run: |
+          for crate in rustls-platform-verifier rustls-native-certs openssl native-tls; do
+            if cargo tree --workspace -i "$crate" >/tmp/ongrok-dependency-check 2>&1; then
+              cat /tmp/ongrok-dependency-check
+              echo "forbidden TLS dependency detected: $crate" >&2
+              exit 1
+            fi
+          done
 
   security:
     runs-on: ubuntu-latest
