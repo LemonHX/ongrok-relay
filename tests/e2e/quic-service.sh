@@ -253,4 +253,6 @@ curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v
   | grep -q '"service_name":"demo"'
 curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v1/services \
   | grep -q '"public_host":"web.example.test"'
+curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v1/events \
+  | python3 -c 'import json, sys; assert any(item["kind"] == "ServiceRegistered" for item in json.load(sys.stdin))'
 echo "QUIC_TCP_HTTP_RELAY_E2E_OK"
