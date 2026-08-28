@@ -17,33 +17,33 @@ jobs:
     env:
       CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-      CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
+      CF_PAGES_PROJECT: ongrok-relay
     steps:
       - name: Check Cloudflare credentials
-        if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' || env.CF_PAGES_PROJECT == '' }}
-        run: echo "Cloudflare Pages secrets are not configured; skipping deployment"
+        if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' }}
+        run: echo "Cloudflare Pages API/account secrets are not configured; skipping deployment"
       - uses: actions/checkout@v4
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
       - uses: actions/setup-node@v4
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         with:
           node-version: 24
       - uses: pnpm/action-setup@v4
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         with:
           version: 11.9.0
       - run: pnpm install --ignore-workspace --frozen-lockfile
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         working-directory: frontend
       - run: pnpm run build
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         working-directory: frontend
       - name: Deploy frontend to Cloudflare Pages
         uses: cloudflare/pages-action@v1
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' && env.CF_PAGES_PROJECT != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: ${{ secrets.CF_PAGES_PROJECT }}
+          projectName: ${{ env.CF_PAGES_PROJECT }}
           directory: frontend/dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
