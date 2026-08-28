@@ -1,4 +1,8 @@
 use crate::{
+    api_models::{
+        AuthResponse, ErrorResponse, HealthResponse, ServiceCreateRequest, ServiceView,
+        TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
+    },
     config::{Cli, Command, RunOptions, TokenCommand, validate_tls_material},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
     store::ServiceStore,
@@ -12,15 +16,15 @@ use hyper::{Method, Request, Response, StatusCode, body::Incoming, header};
 use hyper::{client::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use libongrok::{
-    Frame, Metadata, NodeId, NodeMetric, NodeRecord, NodeStatus, PROTOCOL_VERSION, Protocol,
-    QuicIo, ServiceDefinition, ServiceId, ServiceStatus, TokenKind, TransportKind, TunnelId,
-    YamuxIo, YamuxSession, generate_token, hash_token, validate_service_name,
+    Frame, NodeMetric, NodeRecord, NodeStatus, PROTOCOL_VERSION, QuicIo, ServiceDefinition,
+    ServiceId, ServiceStatus, TokenKind, TransportKind, TunnelId, YamuxIo, YamuxSession,
+    generate_token, hash_token, validate_service_name,
 };
 use mimalloc::MiMalloc;
 use quinn::crypto::rustls::QuicServerConfig;
 use redb::Database;
 use rustls::ServerConfig;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::BTreeMap,
     convert::Infallible,
@@ -379,71 +383,6 @@ async fn validate_node_identity(
         anyhow::bail!("node public key does not match persisted identity");
     }
     Ok(())
-}
-
-#[derive(Serialize)]
-struct ErrorResponse<'a> {
-    error: &'a str,
-}
-#[derive(Serialize)]
-struct AuthResponse {
-    kind: &'static str,
-    capabilities: Vec<&'static str>,
-    server: &'static str,
-}
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
-#[derive(Deserialize)]
-struct TokenMutationRequest {
-    kind: TokenKind,
-}
-#[derive(Serialize)]
-struct TokenRotationResponse {
-    kind: &'static str,
-    token: String,
-}
-#[derive(Serialize)]
-struct TokenRevocationResponse {
-    kind: &'static str,
-    revoked: bool,
-}
-#[derive(Serialize)]
-struct ServiceView {
-    #[serde(flatten)]
-    service: ServiceDefinition,
-    status: ServiceStatus,
-    transport: Option<TransportKind>,
-    last_heartbeat_at_unix_ms: Option<i64>,
-    rtt_ms: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct ServiceCreateRequest {
-    service_name: String,
-    node_id: NodeId,
-    protocol: Protocol,
-    local_address: String,
-    #[serde(default)]
-    public_port: Option<u16>,
-    #[serde(default)]
-    metadata: Metadata,
-}
-
-impl ServiceCreateRequest {
-    fn into_definition(self) -> ServiceDefinition {
-        ServiceDefinition {
-            service_id: ServiceId::new(),
-            service_name: self.service_name,
-            node_id: self.node_id,
-            protocol: self.protocol,
-            local_address: self.local_address,
-            public_host: None,
-            public_port: self.public_port,
-            metadata: self.metadata,
-        }
-    }
 }
 
 pub(crate) async fn run_cli() -> Result<()> {
