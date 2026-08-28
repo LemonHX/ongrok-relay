@@ -565,8 +565,14 @@ async fn run_api(address: SocketAddr, state: AppState) -> Result<()> {
             }
         }
     }
-    tasks.abort_all();
-    while tasks.join_next().await.is_some() {}
+    // Stop accepting new requests first, then give in-flight HTTP handlers a
+    // bounded window to finish before forcefully cancelling them.
+    let drain = async { while tasks.join_next().await.is_some() {} };
+    if timeout(Duration::from_secs(5), drain).await.is_err() {
+        warn!("control API graceful shutdown timed out; aborting in-flight requests");
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+    }
     Ok(())
 }
 
