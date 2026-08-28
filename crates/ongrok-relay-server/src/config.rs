@@ -5,13 +5,87 @@ use clap::{Args, Parser, Subcommand};
 use libongrok::TokenKind;
 use quinn::crypto::rustls::QuicServerConfig;
 use rustls::{ServerConfig, pki_types::CertificateDer};
-use std::{fs::File, io::BufReader, net::SocketAddr, path::PathBuf, sync::Arc};
+use serde::Deserialize;
+use std::{env, fs::File, io::BufReader, net::SocketAddr, path::PathBuf, sync::Arc};
 
 #[derive(Parser, Debug)]
 #[command(name = "ongrok-relay-server", version, about = "ongrok relay server")]
 pub(crate) struct Cli {
+    /// Optional TOML config. Values from explicit CLI/env variables take precedence.
+    #[arg(long, global = true, env = "ONGROK_CONFIG")]
+    pub(crate) config: Option<PathBuf>,
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ConfigFile {
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    api_listen: Option<String>,
+    quic_listen: Option<String>,
+    tcp_tls_listen: Option<String>,
+    http_listen: Option<String>,
+    https_listen: Option<String>,
+    http_domain: Option<String>,
+    public_host: Option<String>,
+    tcp_port_start: Option<u16>,
+    tcp_port_end: Option<u16>,
+    admin_token: Option<String>,
+    user_token: Option<String>,
+    db_path: Option<String>,
+}
+
+/// Load config values into the environment before clap resolves its env values.
+/// This preserves the documented precedence: CLI > environment > TOML > defaults.
+pub(crate) fn load_config_environment() -> Result<()> {
+    let path = env::var_os("ONGROK_CONFIG").map(PathBuf::from).or_else(|| {
+        let mut args = env::args_os().skip(1);
+        while let Some(arg) = args.next() {
+            if arg == "--config" {
+                return args.next().map(PathBuf::from);
+            }
+            if let Some(value) = arg.to_string_lossy().strip_prefix("--config=") {
+                return Some(PathBuf::from(value));
+            }
+        }
+        None
+    });
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read config file {}", path.display()))?;
+    let config: ConfigFile = toml::from_str(&contents)
+        .with_context(|| format!("failed to parse TOML config {}", path.display()))?;
+
+    fn set_string(name: &str, value: Option<String>) {
+        if env::var_os(name).is_none()
+            && let Some(value) = value
+        {
+            // This runs before Tokio starts and before any worker threads exist.
+            unsafe { env::set_var(name, value) };
+        }
+    }
+    fn set_u16(name: &str, value: Option<u16>) {
+        set_string(name, value.map(|value| value.to_string()));
+    }
+
+    set_string("ONGROK_TLS_CERT", config.tls_cert);
+    set_string("ONGROK_TLS_KEY", config.tls_key);
+    set_string("ONGROK_API_LISTEN", config.api_listen);
+    set_string("ONGROK_QUIC_LISTEN", config.quic_listen);
+    set_string("ONGROK_TCP_TLS_LISTEN", config.tcp_tls_listen);
+    set_string("ONGROK_HTTP_LISTEN", config.http_listen);
+    set_string("ONGROK_HTTPS_LISTEN", config.https_listen);
+    set_string("ONGROK_HTTP_DOMAIN", config.http_domain);
+    set_string("ONGROK_PUBLIC_HOST", config.public_host);
+    set_u16("ONGROK_TCP_PORT_START", config.tcp_port_start);
+    set_u16("ONGROK_TCP_PORT_END", config.tcp_port_end);
+    set_string("ONGROK_ADMIN_TOKEN", config.admin_token);
+    set_string("ONGROK_USER_TOKEN", config.user_token);
+    set_string("ONGROK_DB_PATH", config.db_path);
+    Ok(())
 }
 
 #[derive(Subcommand, Debug)]
@@ -241,5 +315,29 @@ mod tests {
         value.http_domain = Some("relay.example.test".to_owned());
         value.tcp_tls_listen = "0.0.0.0:8443".parse().unwrap();
         assert!(validate_run_options(&value).is_err());
+    }
+
+    #[test]
+    fn parses_toml_config_with_optional_overrides() {
+        let config: super::ConfigFile = toml::from_str(
+            r#"
+tls_cert = "/etc/ongrok/fullchain.pem"
+tls_key = "/etc/ongrok/private.key"
+api_listen = "127.0.0.1:8080"
+quic_listen = "0.0.0.0:443"
+tcp_port_start = 20000
+tcp_port_end = 30000
+public_host = "relay.example.test"
+"#,
+        )
+        .expect("valid TOML config");
+        assert_eq!(
+            config.tls_cert.as_deref(),
+            Some("/etc/ongrok/fullchain.pem")
+        );
+        assert_eq!(config.quic_listen.as_deref(), Some("0.0.0.0:443"));
+        assert_eq!(config.tcp_port_start, Some(20_000));
+        assert_eq!(config.tcp_port_end, Some(30_000));
+        assert!(config.admin_token.is_none());
     }
 }

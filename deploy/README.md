@@ -8,6 +8,14 @@ Both binaries also load an optional `.env` from the current directory. Shell
 environment variables override values from that file; never commit a real
 `.env` because it contains long-lived tokens.
 
+## TOML configuration
+
+The server can load an optional TOML file with --config /etc/ongrok/server.toml
+or ONGROK_CONFIG. Its keys mirror the run options, such as quic_listen,
+public_host, and tcp_port_start. Precedence is CLI > environment > TOML >
+built-in defaults. Keep token values in a protected environment file or secret
+manager rather than committing them to the TOML file.
+
 ## Linux systemd
 
 1. Create an `ongrok` user, `/etc/ongrok`, and `/var/lib/ongrok`.

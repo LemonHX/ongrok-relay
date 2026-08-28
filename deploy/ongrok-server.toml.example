@@ -1,0 +1,14 @@
+# Optional relay server configuration. CLI arguments and environment variables
+# override these values. Keep admin_token and user_token out of source control.
+tls_cert = "/etc/ongrok/fullchain.pem"
+tls_key = "/etc/ongrok/private.key"
+api_listen = "127.0.0.1:8080"
+quic_listen = "0.0.0.0:443"
+tcp_tls_listen = "0.0.0.0:8443"
+http_listen = "0.0.0.0:80"
+https_listen = "0.0.0.0:4433"
+http_domain = "relay.example.test"
+public_host = "relay.example.test"
+tcp_port_start = 20000
+tcp_port_end = 30000
+db_path = "/var/lib/ongrok/ongrok.redb"

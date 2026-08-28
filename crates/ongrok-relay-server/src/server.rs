@@ -3,7 +3,10 @@ use crate::{
         AuthResponse, ErrorResponse, HealthResponse, ServiceCreateRequest, ServicePatchRequest,
         ServiceView, TokenMutationRequest, TokenRevocationResponse, TokenRotationResponse,
     },
-    config::{Cli, Command, RunOptions, TokenCommand, validate_run_options, validate_tls_material},
+    config::{
+        Cli, Command, RunOptions, TokenCommand, load_config_environment, validate_run_options,
+        validate_tls_material,
+    },
     ingress::{run_http_ingress, run_https_ingress},
     relay::{ensure_tcp_ingress, first_available_tcp_port},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
@@ -58,6 +61,7 @@ pub(crate) async fn run_cli() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    load_config_environment()?;
     let cli = Cli::parse();
     match cli.command {
         Command::Init { db_path } => {
