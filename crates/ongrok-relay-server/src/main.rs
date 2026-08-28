@@ -6,6 +6,7 @@ mod ingress;
 mod server;
 mod state;
 mod store;
+mod transport;
 mod wire;
 
 #[tokio::main]
