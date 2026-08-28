@@ -59,7 +59,8 @@ wait_for_https_response() {
 wait_for_node_offline() {
   for _ in $(seq 1 50); do
     if curl -fsS -H "Authorization: Bearer $ACTIVE_USER_TOKEN" http://127.0.0.1:18080/v1/nodes \
-      | python3 -c 'import json, sys; assert json.load(sys.stdin)[0]["status"] == "Offline"' +      >/dev/null 2>&1; then
+      | python3 -c 'import json, sys; assert json.load(sys.stdin)[0]["status"] == "Offline"' \
+      >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
