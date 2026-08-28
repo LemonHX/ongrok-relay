@@ -5,6 +5,7 @@ use crate::{
     },
     config::{Cli, Command, RunOptions, TokenCommand, validate_tls_material},
     ingress::{run_http_ingress, run_https_ingress},
+    relay::{ensure_tcp_ingress, first_available_tcp_port},
     state::{AppState, ClientSession, activate_session, validate_node_identity},
     store::ServiceStore,
     transport::{run_quic, run_tcp_tls},
@@ -29,13 +30,13 @@ use serde::Serialize;
 use std::{
     collections::BTreeMap,
     convert::Infallible,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt, copy},
-    net::{TcpListener, TcpStream},
+    io::{AsyncRead, AsyncWrite},
+    net::TcpListener,
     signal,
     sync::Mutex,
     task::JoinSet,
@@ -1010,89 +1011,6 @@ pub(crate) async fn handle_quic_connection(
             state.store.put_node(&node)?;
         }
     }
-    Ok(())
-}
-
-fn first_available_tcp_port(
-    services: &BTreeMap<ServiceId, ServiceDefinition>,
-    state: &AppState,
-) -> Option<u16> {
-    (state.tcp_port_start..=state.tcp_port_end).find(|port| {
-        !services.values().any(|service| {
-            service.protocol == libongrok::Protocol::Tcp && service.public_port == Some(*port)
-        })
-    })
-}
-
-async fn ensure_tcp_ingress(state: AppState, service: &ServiceDefinition) -> Result<()> {
-    let port = service
-        .public_port
-        .context("TCP service has no assigned public port")?;
-    {
-        let tasks = state.tcp_ingress_tasks.lock().await;
-        if tasks.contains_key(&service.service_id) {
-            return Ok(());
-        }
-    }
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
-    let listener = TcpListener::bind(address)
-        .await
-        .with_context(|| format!("failed to bind TCP ingress at {address}"))?;
-    let service_id = service.service_id;
-    let task_state = state.clone();
-    let task = tokio::spawn(async move {
-        info!(%address, service_id = %service_id.0, "TCP ingress listening");
-        loop {
-            match listener.accept().await {
-                Ok((visitor, peer)) => {
-                    let state = task_state.clone();
-                    tokio::spawn(async move {
-                        if let Err(error) = forward_tcp_connection(visitor, state, service_id).await
-                        {
-                            warn!(%peer, service_id = %service_id.0, %error, "TCP ingress connection failed");
-                        }
-                    });
-                }
-                Err(error) => {
-                    warn!(%address, service_id = %service_id.0, %error, "TCP ingress accept failed");
-                    break;
-                }
-            }
-        }
-    });
-    let mut tasks = state.tcp_ingress_tasks.lock().await;
-    if let Some(previous) = tasks.insert(service_id, task) {
-        previous.abort();
-    }
-    Ok(())
-}
-
-async fn forward_tcp_connection(
-    visitor: TcpStream,
-    state: AppState,
-    service_id: ServiceId,
-) -> Result<()> {
-    let (tunnel, _) = open_client_stream(&state, service_id).await?;
-    let (mut recv, mut send) = tokio::io::split(tunnel);
-    let (mut visitor_read, mut visitor_write) = visitor.into_split();
-    let visitor_to_client = async {
-        let copied = copy(&mut visitor_read, &mut send).await?;
-        send.shutdown().await?;
-        Ok::<u64, std::io::Error>(copied)
-    };
-    let client_to_visitor = async {
-        let copied = copy(&mut recv, &mut visitor_write).await?;
-        visitor_write.shutdown().await?;
-        Ok::<u64, std::io::Error>(copied)
-    };
-    let (from_visitor, from_client) =
-        tokio::try_join!(visitor_to_client, client_to_visitor).context("TCP relay copy failed")?;
-    info!(
-        service_id = %service_id.0,
-        bytes_from_visitor = from_visitor,
-        bytes_from_client = from_client,
-        "TCP ingress connection completed"
-    );
     Ok(())
 }
 

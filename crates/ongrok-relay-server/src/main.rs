@@ -3,6 +3,7 @@
 mod api_models;
 mod config;
 mod ingress;
+mod relay;
 mod server;
 mod state;
 mod store;
