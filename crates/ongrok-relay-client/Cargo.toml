@@ -16,7 +16,7 @@ hyper = { version = "1.11.0", features = ["full"] }
 hyper-util = { version = "0.1.20", features = ["full"] }
 libongrok = { version = "0.1.0", path = "../libongrok" }
 mimalloc = "0.1.52"
-quinn = "0.11.11"
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rand = "0.10.2"
 rustls = { version = "0.23.43", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-pemfile = "2.2.0"
