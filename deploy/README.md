@@ -4,6 +4,10 @@ These files are examples only. Install the server and client binaries from a
 release bundle, provide a PEM full chain and matching private key, then run
 `ongrok-relay-server doctor` before enabling the service manager unit.
 
+Both binaries also load an optional `.env` from the current directory. Shell
+environment variables override values from that file; never commit a real
+`.env` because it contains long-lived tokens.
+
 ## Linux systemd
 
 1. Create an `ongrok` user, `/etc/ongrok`, and `/var/lib/ongrok`.
