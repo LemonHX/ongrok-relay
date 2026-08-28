@@ -4,7 +4,7 @@ use crate::{server::open_client_stream, state::AppState};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use hyper::header::HeaderName;
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::{
     HeaderMap, Request, Response, StatusCode, body::Incoming, client::conn::http1, header,
     service::service_fn,
@@ -102,7 +102,17 @@ async fn http_ingress_handler(
     protocol: Protocol,
 ) -> Result<Response<IngressBody>, Infallible> {
     if is_api_host(&request, &state) {
-        let response = crate::server::api_handler(request, state).await?;
+        if request.method() == hyper::Method::OPTIONS {
+            let mut response = Response::new(
+                Full::new(Bytes::new())
+                    .map_err(|never| -> ProxyError { match never {} })
+                    .boxed(),
+            );
+            add_api_cors_headers(response.headers_mut());
+            return Ok(response);
+        }
+        let mut response = crate::server::api_handler(request, state).await?;
+        add_api_cors_headers(response.headers_mut());
         return Ok(response.map(|body| {
             body.map_err(|never| -> ProxyError { match never {} })
                 .boxed()
@@ -116,6 +126,22 @@ async fn http_ingress_handler(
         }
     };
     Ok(response)
+}
+
+fn add_api_cors_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("https://relay.lemonhx.moe"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, PATCH, DELETE, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Authorization, Content-Type"),
+    );
+    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
 }
 
 fn is_api_host(request: &Request<Incoming>, state: &AppState) -> bool {
