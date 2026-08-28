@@ -27,3 +27,9 @@ external state and must be backed up before upgrades.
 
 The server does not issue or renew certificates. Use an external ACME client
 or certificate provider, then restart the server after replacing the PEM files.
+
+## Windows
+
+See `windows-service.md`. Use a dedicated service account and an established
+service wrapper; the ongrok binary intentionally does not modify the Windows
+service registry itself.

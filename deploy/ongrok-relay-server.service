@@ -9,7 +9,6 @@ User=ongrok
 Group=ongrok
 EnvironmentFile=/etc/ongrok/server.env
 ExecStart=/usr/local/bin/ongrok-relay-server run
-ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
