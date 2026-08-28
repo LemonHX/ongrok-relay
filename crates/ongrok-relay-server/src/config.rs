@@ -146,6 +146,43 @@ pub(crate) fn validate_run_options(options: &RunOptions) -> Result<()> {
     }) {
         anyhow::bail!("--http-domain must be a non-empty hostname without whitespace");
     }
+    let tcp_listeners = [
+        ("api", options.api_listen),
+        ("tcp-tls", options.tcp_tls_listen),
+        (
+            "http",
+            options
+                .http_listen
+                .unwrap_or_else(|| "0.0.0.0:0".parse().expect("valid wildcard address")),
+        ),
+        (
+            "https",
+            options
+                .https_listen
+                .unwrap_or_else(|| "0.0.0.0:0".parse().expect("valid wildcard address")),
+        ),
+    ];
+    for (index, (left_name, left)) in tcp_listeners.iter().enumerate() {
+        if *left
+            == "0.0.0.0:0"
+                .parse::<SocketAddr>()
+                .expect("valid wildcard address")
+        {
+            continue;
+        }
+        for (right_name, right) in tcp_listeners.iter().skip(index + 1) {
+            if *right
+                != "0.0.0.0:0"
+                    .parse::<SocketAddr>()
+                    .expect("valid wildcard address")
+                && left == right
+            {
+                anyhow::bail!(
+                    "{left_name} and {right_name} listeners use the same TCP address {left}"
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -193,6 +230,16 @@ mod tests {
         let mut value = options();
         value.https_listen = Some("0.0.0.0:443".parse().unwrap());
         value.http_domain = Some("relay.example.test".to_owned());
+        value.tcp_tls_listen = "0.0.0.0:8443".parse().unwrap();
         assert!(validate_run_options(&value).is_ok());
+    }
+
+    #[test]
+    fn rejects_tcp_listener_address_conflicts() {
+        let mut value = options();
+        value.http_listen = Some("0.0.0.0:8443".parse().unwrap());
+        value.http_domain = Some("relay.example.test".to_owned());
+        value.tcp_tls_listen = "0.0.0.0:8443".parse().unwrap();
+        assert!(validate_run_options(&value).is_err());
     }
 }
