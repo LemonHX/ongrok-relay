@@ -6,7 +6,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run src",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "i18next": "25.6.0",
@@ -16,6 +17,7 @@
     "react-i18next": "16.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "@vitejs/plugin-react": "6.0.5",
