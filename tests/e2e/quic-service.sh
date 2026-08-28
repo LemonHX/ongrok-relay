@@ -202,6 +202,10 @@ wait_for_tcp_echo
 wait_for_http_response
 wait_for_chunked_http_response
 wait_for_https_response
+status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Host: unknown.example.test' \
+  http://127.0.0.1:18081/should-not-route)
+test "$status" = 502
 "$ROOT/target/debug/ongrok-relay-client" services list \
   --server http://127.0.0.1:18080 --token user-test \
   | grep -q '"service_name":"demo"'
