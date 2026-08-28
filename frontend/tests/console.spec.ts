@@ -42,6 +42,8 @@ test("logs in and renders services and node metrics", async ({ page }) => {
   await page.getByRole("button", { name: "Nodes" }).click();
   await expect(page.getByText("workstation")).toBeVisible();
   await expect(page.getByText("203.0.113.7:51000")).toBeVisible();
+  await page.getByRole("button", { name: "24h" }).click();
+  await expect(page.getByRole("button", { name: "24h" })).toHaveClass(/selected/);
   await page.getByRole("button", { name: "Events" }).click();
   await expect(page.getByText("Node online")).toBeVisible();
   await expect(page.getByText("node-1")).toBeVisible();

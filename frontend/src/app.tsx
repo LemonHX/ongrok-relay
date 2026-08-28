@@ -373,9 +373,13 @@ function EventPanel({ events }: { events: ControlEvent[] }) {
 }
 
 function NodePanel({ nodes, metrics, syncStatus }: { nodes: Node[]; metrics: Metric[]; syncStatus: string }) {
+  const { t } = useTranslation();
+  const [range, setRange] = useState<"1h" | "24h" | "3d">("1h");
   const node = nodes[0];
   if (!node) return <section className="section empty">{syncStatus}</section>;
   const latest = metrics.at(-1);
+  const rangeSize = range === "1h" ? 60 : range === "24h" ? 1440 : 4320;
+  const visibleMetrics = metrics.slice(-rangeSize);
   return (
     <>
       <div className="stats">
@@ -386,20 +390,35 @@ function NodePanel({ nodes, metrics, syncStatus }: { nodes: Node[]; metrics: Met
       <section className="section">
         <div className="section-head"><h2>{node.metadata.hostname}</h2><span className={node.status === "Online" ? "online" : "offline"}>{node.status}</span></div>
         <p className="muted node-meta">{node.public_ip}:{node.source_port} · {node.metadata.os}/{node.metadata.arch} · {node.transport}</p>
-        <MetricChart metrics={metrics} />
+        <div className="chart-toolbar" role="group" aria-label={t("timeRange")}>
+          {(["1h", "24h", "3d"] as const).map((option) => (
+            <button key={option} className={range === option ? "selected" : ""} onClick={() => setRange(option)}>{option}</button>
+          ))}
+        </div>
+        <div className="charts">
+          <MetricChart label="CPU" metrics={visibleMetrics} read={(metric) => metric.snapshot.cpu_percent} />
+          <MetricChart label={t("memory")} metrics={visibleMetrics} read={(metric) => metric.snapshot.memory_percent} />
+          <MetricChart label="RTT" metrics={visibleMetrics} read={(metric) => metric.rtt_ms} max={500} unit=" ms" />
+        </div>
       </section>
     </>
   );
 }
 
-function MetricChart({ metrics }: { metrics: Metric[] }) {
-  const points = metricPoints(metrics, (metric) => metric.snapshot.cpu_percent);
+function MetricChart({ label, metrics, read, max = 100, unit = "%" }: { label: string; metrics: Metric[]; read: (metric: Metric) => number | null; max?: number; unit?: string }) {
+  const points = metricPoints(metrics, (metric) => {
+    const value = read(metric);
+    return value == null ? null : (value / max) * 100;
+  });
+  const latest = [...metrics].reverse().find((metric) => read(metric) != null);
+  const latestValue = latest ? read(latest) : null;
   return (
     <div className="chart">
-      <div className="chart-label"><span>CPU</span><span>{metrics.length} samples</span></div>
+      <div className="chart-label"><span>{label}</span><span>{latestValue == null ? "--" : `${latestValue.toFixed(1)}${unit}`}</span></div>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="CPU history">
-        <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        {points.length > 0 && <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />}
       </svg>
+      {points.length === 0 && <span className="chart-empty">No samples</span>}
     </div>
   );
 }
