@@ -20,6 +20,12 @@ test("logs in and renders services and node metrics", async ({ page }) => {
       metadata: { hostname: "workstation", os: "linux", arch: "x86_64", client_version: "0.1.0" },
     }] }),
   );
+  await page.route("**/v1/events", async (route) =>
+    route.fulfill({ json: [{
+      event_id: "event-1", occurred_at_unix_ms: 1, kind: "NodeOnline",
+      node_id: "node-1", service_id: null, token_kind: null,
+    }] }),
+  );
   await page.route("**/v1/nodes/node-1/metrics", async (route) =>
     route.fulfill({ json: [{
       recorded_at_unix_ms: 1, rtt_ms: 12,
@@ -36,4 +42,7 @@ test("logs in and renders services and node metrics", async ({ page }) => {
   await page.getByRole("button", { name: "Nodes" }).click();
   await expect(page.getByText("workstation")).toBeVisible();
   await expect(page.getByText("203.0.113.7:51000")).toBeVisible();
+  await page.getByRole("button", { name: "Events" }).click();
+  await expect(page.getByText("Node online")).toBeVisible();
+  await expect(page.getByText("node-1")).toBeVisible();
 });

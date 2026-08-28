@@ -3,6 +3,7 @@ import {
   Languages,
   LayoutDashboard,
   LogOut,
+  History,
   Server,
   Moon,
   RefreshCw,
@@ -37,6 +38,14 @@ type Node = {
 };
 type Metric = MetricSample;
 type Auth = { kind: string };
+type ControlEvent = {
+  event_id: string;
+  occurred_at_unix_ms: number;
+  kind: "NodeOnline" | "NodeOffline" | "ServiceRegistered" | "ServiceDeleted" | "TokenRotated" | "TokenRevoked";
+  node_id: string | null;
+  service_id: string | null;
+  token_kind: "Admin" | "User" | null;
+};
 
 export function App() {
   const { t, i18n } = useTranslation();
@@ -47,7 +56,8 @@ export function App() {
   const [services, setServices] = useState<Service[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
-  const [view, setView] = useState<"overview" | "nodes">("overview");
+  const [events, setEvents] = useState<ControlEvent[]>([]);
+  const [view, setView] = useState<"overview" | "nodes" | "events">("overview");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState(t("waiting"));
   const [syncedAt, setSyncedAt] = useState("--:--");
@@ -67,12 +77,14 @@ export function App() {
   const sync = async () => {
     setSyncStatus(t("syncing"));
     try {
-      const [serviceResult, nodeResult] = await Promise.all([
+      const [serviceResult, nodeResult, eventResult] = await Promise.all([
         request<Service[]>("/v1/services"),
         request<Node[]>("/v1/nodes"),
+        request<ControlEvent[]>("/v1/events"),
       ]);
       setServices(serviceResult);
       setNodes(nodeResult);
+      setEvents(eventResult);
       if (nodeResult[0]) {
         setMetrics(await request<Metric[]>(`/v1/nodes/${nodeResult[0].node_id}/metrics`));
       } else {
@@ -150,6 +162,10 @@ export function App() {
             <Server size={17} />
             {t("nodes")}
           </button>
+          <button className={`nav-item ${view === "events" ? "active" : ""}`} onClick={() => setView("events")}>
+            <History size={17} />
+            {t("events")}
+          </button>
         </nav>
         <div className="sidebar-bottom">
           <label className="field">
@@ -205,7 +221,7 @@ export function App() {
           <div className="heading">
             <div>
               <p className="eyebrow">{t(view)}</p>
-              <h1>{view === "overview" ? t("relayStatus") : t("nodes")}</h1>
+              <h1>{view === "overview" ? t("relayStatus") : t(view)}</h1>
             </div>
             <button className="button secondary" onClick={() => void sync()}>
               <RefreshCw size={15} /> {t("refresh")}
@@ -263,12 +279,38 @@ export function App() {
             </div>
           </section>
           </>
-          ) : (
+          ) : view === "nodes" ? (
             <NodePanel nodes={nodes} metrics={metrics} syncStatus={syncStatus} />
+          ) : (
+            <EventPanel events={events} />
           )}
         </div>
       </main>
     </div>
+  );
+}
+
+function EventPanel({ events }: { events: ControlEvent[] }) {
+  const { t } = useTranslation();
+  return (
+    <section className="section">
+      <div className="section-head"><h2>{t("recentEvents")}</h2><span className="muted">{events.length}</span></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>{t("time")}</th><th>{t("event")}</th><th>{t("node")}</th><th>{t("service")}</th></tr></thead>
+          <tbody>
+            {events.length === 0 ? <tr><td colSpan={4} className="empty">{t("noEvents")}</td></tr> : events.map((event) => (
+              <tr key={event.event_id}>
+                <td>{new Date(event.occurred_at_unix_ms).toLocaleString()}</td>
+                <td><strong>{t(`eventKinds.${event.kind}`)}</strong></td>
+                <td>{event.node_id ?? "--"}</td>
+                <td>{event.service_id ?? event.token_kind ?? "--"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
