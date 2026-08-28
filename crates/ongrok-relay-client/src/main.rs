@@ -5,7 +5,7 @@ use directories::ProjectDirs;
 use ed25519_dalek::SigningKey;
 use http_body_util::{BodyExt, Empty};
 use hyper::{Request, Uri, header};
-use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor, rt::TokioIo};
 use libongrok::{
     Frame, HeartbeatSnapshot, MAX_FRAME_SIZE, Metadata, NodeId, NodeMetadata, PROTOCOL_VERSION,
     Protocol, QuicIo, ServiceDefinition, ServiceId, YamuxSession, decode_frame_payload,
@@ -147,6 +147,8 @@ enum ServicesCommand {
         server: String,
         #[arg(long, env = "ONGROK_TOKEN")]
         token: String,
+        #[arg(long, env = "ONGROK_CA_CERT")]
+        ca_cert: Option<PathBuf>,
     },
 }
 
@@ -195,8 +197,13 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Services {
-            command: ServicesCommand::List { server, token },
-        } => services_list(&server, &token).await,
+            command:
+                ServicesCommand::List {
+                    server,
+                    token,
+                    ca_cert,
+                },
+        } => services_list(&server, &token, ca_cert.as_ref()).await,
         Command::Run {
             server,
             server_name,
@@ -405,15 +412,59 @@ fn node_public_key(state: &NodeState) -> [u8; 32] {
         .to_bytes()
 }
 
-async fn services_list(server: &str, token: &str) -> Result<()> {
+async fn services_list(server: &str, token: &str, ca_cert: Option<&PathBuf>) -> Result<()> {
     let base: Uri = server
         .parse()
         .context("server must be an absolute HTTP URL")?;
     let scheme = base.scheme_str().context("server URL needs a scheme")?;
-    if scheme != "http" {
-        anyhow::bail!("only http:// control API is available during this development phase");
-    }
     let authority = base.authority().context("server URL needs an authority")?;
+    if scheme == "http" {
+        return services_list_http(authority.as_str(), token).await;
+    }
+    if scheme != "https" {
+        anyhow::bail!("server URL must use http:// or https://");
+    }
+    let ca_cert = ca_cert.context("--ca-cert is required for an https:// server")?;
+    let roots = load_roots(ca_cert)?;
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let connector = TlsConnector::from(Arc::new(crypto));
+    let host = base.host().context("server URL host is empty")?;
+    let name =
+        ServerName::try_from(host.to_owned()).context("server URL host is not a valid DNS name")?;
+    let port = base.port_u16().unwrap_or(443);
+    let socket = timeout(Duration::from_secs(10), TcpStream::connect((host, port)))
+        .await
+        .context("HTTPS control API connection timed out")??;
+    let stream = timeout(Duration::from_secs(15), connector.connect(name, socket))
+        .await
+        .context("HTTPS control API TLS handshake timed out")??;
+    let io = TokioIo::new(stream);
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(io)
+        .await
+        .context("HTTPS control API HTTP handshake failed")?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::debug!(%error, "HTTPS services connection ended");
+        }
+    });
+    let uri: Uri = format!("https://{authority}/v1/services")
+        .parse()
+        .context("failed to build services URL")?;
+    let request = Request::builder()
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Empty::<Bytes>::new())?;
+    let response = sender
+        .send_request(request)
+        .await
+        .context("HTTPS services request failed")?;
+    print_services_response(response).await
+}
+
+async fn services_list_http(authority: &str, token: &str) -> Result<()> {
     let uri: Uri = format!("http://{authority}/v1/services")
         .parse()
         .context("failed to build services URL")?;
@@ -426,12 +477,20 @@ async fn services_list(server: &str, token: &str) -> Result<()> {
         .request(request)
         .await
         .context("services request failed")?;
+    print_services_response(response).await
+}
+
+async fn print_services_response<B>(response: hyper::Response<B>) -> Result<()>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: std::fmt::Display,
+{
     let status = response.status();
     let body = response
         .into_body()
         .collect()
         .await
-        .context("failed to read services response")?
+        .map_err(|error| anyhow::anyhow!("failed to read services response: {error}"))?
         .to_bytes();
     if !status.is_success() {
         anyhow::bail!(

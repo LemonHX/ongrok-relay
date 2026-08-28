@@ -164,6 +164,9 @@ HTTPS_CLIENT_PID=$!
 wait_for_tcp_echo
 wait_for_http_response
 wait_for_https_response
+"$ROOT/target/debug/ongrok-relay-client" services list \
+  --server http://127.0.0.1:18080 --token user-test \
+  | grep -q '"service_name":"demo"'
 
 curl -fsS -H 'Authorization: Bearer user-test' http://127.0.0.1:18080/v1/services \
   | grep -q '"service_name":"demo"'
